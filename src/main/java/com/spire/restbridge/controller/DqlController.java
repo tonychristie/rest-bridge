@@ -41,7 +41,9 @@ public class DqlController {
         summary = "Execute DQL query",
         description = "Executes a DQL SELECT query and returns the results. " +
                       "Note: DQL may be disabled on the Documentum REST Services server. " +
-                      "If disabled, a 503 error will be returned."
+                      "If disabled, a 503 error will be returned. " +
+                      "LIMITATION: Aggregate queries (GROUP BY, COUNT, SUM, etc.) are not supported " +
+                      "via REST Services - use DFC Bridge for aggregate queries."
     )
     @ApiResponses({
         @ApiResponse(
