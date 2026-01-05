@@ -1,6 +1,7 @@
 package com.spire.restbridge.service;
 
 import com.spire.restbridge.dto.DqlRequest;
+import com.spire.restbridge.exception.AggregateQueryNotSupportedException;
 import com.spire.restbridge.exception.DqlException;
 import com.spire.restbridge.exception.DqlNotAvailableException;
 import com.spire.restbridge.model.QueryResult;
@@ -52,6 +53,12 @@ public class DqlService {
      */
     public QueryResult executeQuery(DqlRequest request) {
         log.debug("Executing DQL via REST: {}", request.getQuery());
+
+        // Check for aggregate queries before attempting execution
+        if (isAggregateQuery(request.getQuery())) {
+            log.warn("Aggregate query detected, not supported via REST: {}", request.getQuery());
+            throw new AggregateQueryNotSupportedException(request.getQuery());
+        }
 
         RestSessionHolder session = sessionService.getSession(request.getSessionId());
 
@@ -125,6 +132,12 @@ public class DqlService {
                     session.setDqlAvailable(false);
                     session.setDqlChecked(true);
                     throw new DqlNotAvailableException(e.getResponseBodyAsString());
+                }
+                // Check for QueryResultItemView error (aggregate query indicator)
+                if (body.contains("queryresultitemview") ||
+                    (body.contains("failed to instantiate") && body.contains("id=null"))) {
+                    log.warn("Server-side aggregate query error detected: {}", body);
+                    throw new AggregateQueryNotSupportedException(request.getQuery());
                 }
             }
             throw new DqlException("DQL execution failed: " + e.getResponseBodyAsString(), e);
@@ -283,5 +296,46 @@ public class DqlService {
             return "BOOLEAN";
         }
         return "STRING";
+    }
+
+    /**
+     * Detect if a DQL query is an aggregate query that is not supported
+     * by Documentum REST Services.
+     *
+     * Aggregate queries return computed results without r_object_id, which
+     * causes the REST API to fail when trying to instantiate QueryResultItemView.
+     *
+     * @param query The DQL query to check
+     * @return true if the query appears to be an aggregate query
+     */
+    private boolean isAggregateQuery(String query) {
+        if (query == null) {
+            return false;
+        }
+
+        String upperQuery = query.toUpperCase().trim();
+
+        // GROUP BY is the clearest indicator of an aggregate query
+        if (upperQuery.contains("GROUP BY")) {
+            return true;
+        }
+
+        // Check for aggregate functions in SELECT clause (without r_object_id)
+        String[] aggregateFunctions = {"COUNT(", "SUM(", "AVG(", "MIN(", "MAX("};
+
+        int selectIndex = upperQuery.indexOf("SELECT");
+        int fromIndex = upperQuery.indexOf("FROM");
+
+        if (selectIndex >= 0 && fromIndex > selectIndex) {
+            String selectClause = upperQuery.substring(selectIndex, fromIndex);
+
+            for (String func : aggregateFunctions) {
+                if (selectClause.contains(func) && !selectClause.contains("R_OBJECT_ID")) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

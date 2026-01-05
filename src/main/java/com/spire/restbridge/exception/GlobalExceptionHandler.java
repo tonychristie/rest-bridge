@@ -40,6 +40,14 @@ public class GlobalExceptionHandler {
                 .body(ErrorResponse.of(e.getCode(), e.getMessage()));
     }
 
+    @ExceptionHandler(AggregateQueryNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleAggregateQueryNotSupportedException(
+            AggregateQueryNotSupportedException e) {
+        log.warn("Aggregate query not supported: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ErrorResponse.of("AGGREGATE_QUERY_NOT_SUPPORTED", e.getMessage()));
+    }
+
     @ExceptionHandler(DqlException.class)
     public ResponseEntity<ErrorResponse> handleDqlException(DqlException e) {
         log.warn("DQL error: {}", e.getMessage());
