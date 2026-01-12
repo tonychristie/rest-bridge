@@ -26,7 +26,7 @@ public class StatusController {
     public ResponseEntity<Map<String, Object>> status() {
         return ResponseEntity.ok(Map.of(
                 "service", "rest-bridge",
-                "version", "1.0.0-SNAPSHOT",
+                "version", "1.0.0",
                 "backend", "REST",
                 "description", "Documentum REST Services bridge - uses native REST API endpoints"
         ));
