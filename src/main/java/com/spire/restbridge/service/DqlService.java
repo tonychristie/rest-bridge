@@ -161,16 +161,16 @@ public class DqlService {
 
             session.setDqlAvailable(response != null);
             session.setDqlChecked(true);
-            log.info("DQL is {} for this session", session.isDqlAvailable() ? "available" : "not available");
+            log.debug("DQL is {} for this session", session.isDqlAvailable() ? "available" : "not available");
 
         } catch (WebClientResponseException e) {
             session.setDqlAvailable(false);
             session.setDqlChecked(true);
-            log.info("DQL is not available: {}", e.getResponseBodyAsString());
+            log.debug("DQL is not available: {}", e.getResponseBodyAsString());
         } catch (Exception e) {
             session.setDqlAvailable(false);
             session.setDqlChecked(true);
-            log.info("DQL is not available: {}", e.getMessage());
+            log.debug("DQL is not available: {}", e.getMessage());
         }
     }
 
