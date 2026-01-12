@@ -53,7 +53,7 @@ No DFC installation required - REST Bridge is a pure Java application.
 
 ```bash
 # Clone the repository
-git clone http://colossus:3000/tchristie/rest-bridge.git
+git clone <repository-url>
 cd rest-bridge
 
 # Build with Maven
@@ -141,9 +141,19 @@ Once running, access the Swagger UI at:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/v1/objects/{id}` | Get object by r_object_id |
-| PUT | `/api/v1/objects/{id}` | Update object attributes |
+| POST | `/api/v1/objects/{id}` | Update object attributes |
+| POST | `/api/v1/objects` | Create object |
+| DELETE | `/api/v1/objects/{id}` | Delete object |
 | GET | `/api/v1/cabinets` | List cabinets |
-| GET | `/api/v1/folders/{id}/objects` | List folder contents |
+| GET | `/api/v1/objects/{id}/contents` | List folder contents |
+
+### Version Control
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| PUT | `/api/v1/objects/{id}/lock` | Checkout (lock) object |
+| DELETE | `/api/v1/objects/{id}/lock` | Cancel checkout |
+| POST | `/api/v1/objects/{id}/versions` | Checkin object |
 
 ### Type Operations
 
@@ -346,5 +356,5 @@ MIT License - see LICENSE file for details.
 
 ## Related Projects
 
-- [dfc-bridge](http://colossus:3000/tchristie/dfc-bridge) - DFC-based bridge for native Documentum access
-- [dctm-vscode](http://colossus:3000/tchristie/dctm-vscode) - VS Code extension for Documentum
+- **dfc-bridge** - DFC-based bridge for native Documentum access
+- **dctm-vscode** - VS Code extension for Documentum
