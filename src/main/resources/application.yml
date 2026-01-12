@@ -24,11 +24,11 @@ management:
     health:
       show-details: when-authorized
 
-# Logging - quiet by default, use -Dlogging.level.com.spire.restbridge=DEBUG for detailed output
+# Logging - quiet by default, use -Dlogging.level.com.spirecentral.restbridge=DEBUG for detailed output
 logging:
   level:
     root: WARN
-    com.spire.restbridge: INFO
+    com.spirecentral.restbridge: INFO
     org.springframework.web.reactive.function.client: WARN
 
 # OpenAPI/Swagger
