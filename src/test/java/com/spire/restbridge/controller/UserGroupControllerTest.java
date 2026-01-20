@@ -173,4 +173,60 @@ class UserGroupControllerTest {
             controller.getGroup("nonexistent", "session-123");
         });
     }
+
+    @Test
+    void getGroupsForUser_returnsGroupList() {
+        List<GroupInfo> groups = Arrays.asList(
+            GroupInfo.builder().groupName("group1").objectId("1201234567890001").build(),
+            GroupInfo.builder().groupName("group2").objectId("1201234567890002").build()
+        );
+        when(userGroupService.getGroupsForUser("session-123", "dmadmin")).thenReturn(groups);
+
+        ResponseEntity<List<GroupInfo>> response = controller.getGroupsForUser("dmadmin", "session-123");
+
+        assertEquals(200, response.getStatusCode().value());
+        assertNotNull(response.getBody());
+        assertEquals(2, response.getBody().size());
+        assertEquals("group1", response.getBody().get(0).getGroupName());
+    }
+
+    @Test
+    void getGroupsForUser_userNotInGroups_returnsEmptyList() {
+        when(userGroupService.getGroupsForUser("session-123", "newuser"))
+            .thenReturn(Collections.emptyList());
+
+        ResponseEntity<List<GroupInfo>> response = controller.getGroupsForUser("newuser", "session-123");
+
+        assertEquals(200, response.getStatusCode().value());
+        assertNotNull(response.getBody());
+        assertTrue(response.getBody().isEmpty());
+    }
+
+    @Test
+    void getParentGroups_returnsParentGroupList() {
+        List<GroupInfo> parentGroups = Arrays.asList(
+            GroupInfo.builder().groupName("parentgroup1").objectId("1201234567890003").build(),
+            GroupInfo.builder().groupName("parentgroup2").objectId("1201234567890004").build()
+        );
+        when(userGroupService.getParentGroups("session-123", "childgroup")).thenReturn(parentGroups);
+
+        ResponseEntity<List<GroupInfo>> response = controller.getParentGroups("childgroup", "session-123");
+
+        assertEquals(200, response.getStatusCode().value());
+        assertNotNull(response.getBody());
+        assertEquals(2, response.getBody().size());
+        assertEquals("parentgroup1", response.getBody().get(0).getGroupName());
+    }
+
+    @Test
+    void getParentGroups_noParentGroups_returnsEmptyList() {
+        when(userGroupService.getParentGroups("session-123", "topgroup"))
+            .thenReturn(Collections.emptyList());
+
+        ResponseEntity<List<GroupInfo>> response = controller.getParentGroups("topgroup", "session-123");
+
+        assertEquals(200, response.getStatusCode().value());
+        assertNotNull(response.getBody());
+        assertTrue(response.getBody().isEmpty());
+    }
 }
