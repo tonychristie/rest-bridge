@@ -84,4 +84,24 @@ class UserGroupServiceTest {
             userGroupService.getGroup("invalid-session", "docu");
         });
     }
+
+    @Test
+    void getGroupsForUser_invalidSession_throwsException() {
+        when(sessionService.getSession("invalid-session"))
+            .thenThrow(new SessionNotFoundException("invalid-session"));
+
+        assertThrows(SessionNotFoundException.class, () -> {
+            userGroupService.getGroupsForUser("invalid-session", "dmadmin");
+        });
+    }
+
+    @Test
+    void getParentGroups_invalidSession_throwsException() {
+        when(sessionService.getSession("invalid-session"))
+            .thenThrow(new SessionNotFoundException("invalid-session"));
+
+        assertThrows(SessionNotFoundException.class, () -> {
+            userGroupService.getParentGroups("invalid-session", "childgroup");
+        });
+    }
 }
