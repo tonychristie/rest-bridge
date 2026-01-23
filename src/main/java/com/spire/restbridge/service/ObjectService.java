@@ -19,8 +19,11 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Service for object operations via Documentum REST Services.
@@ -40,10 +43,15 @@ public class ObjectService {
     private static final int TIMEOUT_SECONDS = 30;
 
     private final SessionService sessionService;
+    private final TypeService typeService;
     private final ObjectMapper objectMapper;
 
-    public ObjectService(SessionService sessionService, ObjectMapper objectMapper) {
+    /** Cache of repeating attribute names by type name. */
+    private final Map<String, Set<String>> repeatingAttributeCache = new ConcurrentHashMap<>();
+
+    public ObjectService(SessionService sessionService, TypeService typeService, ObjectMapper objectMapper) {
         this.sessionService = sessionService;
+        this.typeService = typeService;
         this.objectMapper = objectMapper;
     }
 
@@ -180,8 +188,13 @@ public class ObjectService {
         RestSessionHolder session = sessionService.getSession(sessionId);
 
         try {
+            // Get object type to normalize repeating attributes
+            String objectType = getObjectType(session, objectId);
+            Map<String, Object> normalizedAttrs = normalizeAttributes(sessionId, objectType,
+                    request.getAttributes());
+
             Map<String, Object> payload = new HashMap<>();
-            payload.put("properties", request.getAttributes());
+            payload.put("properties", normalizedAttrs);
 
             String payloadJson = objectMapper.writeValueAsString(payload);
 
@@ -345,6 +358,10 @@ public class ObjectService {
         RestSessionHolder session = sessionService.getSession(sessionId);
 
         try {
+            // Normalize repeating attributes based on type definition
+            Map<String, Object> normalizedAttrs = normalizeAttributes(sessionId,
+                    request.getObjectType(), request.getAttributes());
+
             Map<String, Object> payload = new HashMap<>();
             Map<String, Object> properties = new HashMap<>();
 
@@ -352,8 +369,8 @@ public class ObjectService {
             if (request.getObjectName() != null) {
                 properties.put("object_name", request.getObjectName());
             }
-            if (request.getAttributes() != null) {
-                properties.putAll(request.getAttributes());
+            if (normalizedAttrs != null) {
+                properties.putAll(normalizedAttrs);
             }
             payload.put("properties", properties);
 
@@ -480,6 +497,34 @@ public class ObjectService {
         } catch (Exception e) {
             throw new RestBridgeException(ERROR_CODE,
                     "Failed to resolve folder path: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Get the object type for an object by ID.
+     * Used to determine which attributes are repeating before updates.
+     */
+    @SuppressWarnings("unchecked")
+    private String getObjectType(RestSessionHolder session, String objectId) {
+        try {
+            Map<String, Object> response = session.getWebClient().get()
+                    .uri("/repositories/{repo}/objects/{objectId}",
+                            session.getRepository(), objectId)
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block(Duration.ofSeconds(TIMEOUT_SECONDS));
+
+            if (response != null) {
+                Map<String, Object> properties = (Map<String, Object>) response.get("properties");
+                if (properties != null) {
+                    return (String) properties.getOrDefault("r_object_type", "dm_sysobject");
+                }
+            }
+            return "dm_sysobject";
+        } catch (Exception e) {
+            log.warn("Failed to get object type for {}, defaulting to dm_sysobject: {}",
+                    objectId, e.getMessage());
+            return "dm_sysobject";
         }
     }
 
@@ -895,5 +940,58 @@ public class ObjectService {
         populatePermissions(session, objectInfo);
 
         return objectInfo;
+    }
+
+    /**
+     * Get the set of repeating attribute names for a type, using cache.
+     */
+    private Set<String> getRepeatingAttributes(String sessionId, String typeName) {
+        return repeatingAttributeCache.computeIfAbsent(typeName, t -> {
+            try {
+                TypeInfo typeInfo = typeService.getTypeInfo(sessionId, t);
+                Set<String> repeating = new HashSet<>();
+                for (TypeInfo.AttributeInfo attr : typeInfo.getAttributes()) {
+                    if (attr.isRepeating()) {
+                        repeating.add(attr.getName());
+                    }
+                }
+                log.debug("Cached {} repeating attributes for type {}", repeating.size(), t);
+                return repeating;
+            } catch (Exception e) {
+                log.warn("Failed to get type info for {}, attributes will not be normalized: {}",
+                        t, e.getMessage());
+                return Collections.emptySet();
+            }
+        });
+    }
+
+    /**
+     * Normalize attributes for a given type, ensuring repeating attributes are lists.
+     * If an attribute is repeating but the value is a scalar, wrap it in a list.
+     */
+    private Map<String, Object> normalizeAttributes(String sessionId, String typeName,
+                                                     Map<String, Object> attributes) {
+        if (attributes == null || attributes.isEmpty()) {
+            return attributes;
+        }
+
+        Set<String> repeatingAttrs = getRepeatingAttributes(sessionId, typeName);
+        if (repeatingAttrs.isEmpty()) {
+            return attributes;
+        }
+
+        Map<String, Object> normalized = new HashMap<>(attributes);
+        for (Map.Entry<String, Object> entry : normalized.entrySet()) {
+            String attrName = entry.getKey();
+            Object value = entry.getValue();
+
+            if (repeatingAttrs.contains(attrName) && value != null && !(value instanceof List)) {
+                // Wrap scalar value in a list for repeating attribute
+                normalized.put(attrName, Collections.singletonList(value));
+                log.debug("Normalized repeating attribute {} from scalar to list", attrName);
+            }
+        }
+
+        return normalized;
     }
 }
