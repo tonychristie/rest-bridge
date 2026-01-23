@@ -1,5 +1,6 @@
 package com.spire.restbridge.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.spire.restbridge.dto.CreateObjectRequest;
 import com.spire.restbridge.exception.ObjectNotFoundException;
 import com.spire.restbridge.exception.SessionNotFoundException;
@@ -22,12 +23,14 @@ class ObjectServiceTest {
     @Mock
     private SessionService sessionService;
 
+    private ObjectMapper objectMapper = new ObjectMapper();
+
     private ObjectService objectService;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        objectService = new ObjectService(sessionService);
+        objectService = new ObjectService(sessionService, objectMapper);
     }
 
     @Test
