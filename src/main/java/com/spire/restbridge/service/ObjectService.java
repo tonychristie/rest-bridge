@@ -6,6 +6,7 @@ import com.spire.restbridge.exception.ObjectNotFoundException;
 import com.spire.restbridge.exception.RestBridgeException;
 import com.spire.restbridge.model.ObjectInfo;
 import com.spire.restbridge.model.TypeInfo;
+import com.spire.restbridge.util.PermissionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -13,6 +14,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,7 +63,9 @@ public class ObjectService {
                 throw new ObjectNotFoundException(objectId);
             }
 
-            return extractObjectInfo(response);
+            ObjectInfo objectInfo = extractObjectInfo(response);
+            populatePermissions(session, objectInfo);
+            return objectInfo;
 
         } catch (WebClientResponseException.NotFound e) {
             throw new ObjectNotFoundException(objectId);
@@ -186,7 +190,9 @@ public class ObjectService {
                 throw new RestBridgeException(ERROR_CODE, "No response from update");
             }
 
-            return extractObjectInfo(response);
+            ObjectInfo objectInfo = extractObjectInfo(response);
+            populatePermissions(session, objectInfo);
+            return objectInfo;
 
         } catch (WebClientResponseException.NotFound e) {
             throw new ObjectNotFoundException(objectId);
@@ -222,7 +228,9 @@ public class ObjectService {
                 throw new RestBridgeException(ERROR_CODE, "No response from checkout");
             }
 
-            return extractObjectInfo(response);
+            ObjectInfo objectInfo = extractObjectInfo(response);
+            populatePermissions(session, objectInfo);
+            return objectInfo;
 
         } catch (WebClientResponseException.NotFound e) {
             throw new ObjectNotFoundException(objectId);
@@ -293,7 +301,9 @@ public class ObjectService {
                 throw new RestBridgeException(ERROR_CODE, "No response from checkin");
             }
 
-            return extractObjectInfo(response);
+            ObjectInfo objectInfo = extractObjectInfo(response);
+            populatePermissions(session, objectInfo);
+            return objectInfo;
 
         } catch (WebClientResponseException.NotFound e) {
             throw new ObjectNotFoundException(objectId);
@@ -365,7 +375,9 @@ public class ObjectService {
                 throw new RestBridgeException(ERROR_CODE, "No response from create");
             }
 
-            return extractObjectInfo(response);
+            ObjectInfo objectInfo = extractObjectInfo(response);
+            populatePermissions(session, objectInfo);
+            return objectInfo;
 
         } catch (WebClientResponseException e) {
             throw new RestBridgeException(ERROR_CODE,
@@ -502,5 +514,76 @@ public class ObjectService {
                 .type(type)
                 .name(title)
                 .build();
+    }
+
+    /**
+     * Fetch permission information for an object and populate it in the ObjectInfo.
+     */
+    private void populatePermissions(RestSessionHolder session, ObjectInfo objectInfo) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = session.getWebClient().get()
+                    .uri("/repositories/{repo}/objects/{objectId}/permissions",
+                            session.getRepository(), objectInfo.getObjectId())
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block(Duration.ofSeconds(TIMEOUT_SECONDS));
+
+            if (response != null) {
+                extractPermissionInfo(response, objectInfo);
+            }
+        } catch (WebClientResponseException.NotFound e) {
+            // Object may not support permissions (non-sysobject)
+            log.debug("No permissions available for object {}", objectInfo.getObjectId());
+        } catch (Exception e) {
+            // Log but don't fail - permissions are supplementary info
+            log.warn("Failed to fetch permissions for {}: {}", objectInfo.getObjectId(), e.getMessage());
+        }
+    }
+
+    /**
+     * Extract permission information from the REST API response.
+     */
+    @SuppressWarnings("unchecked")
+    private void extractPermissionInfo(Map<String, Object> response, ObjectInfo objectInfo) {
+        // The REST API returns the current user's permission directly
+        Integer basicPermission = null;
+        String permissionLabel = null;
+        List<String> extendedPermissions = new ArrayList<>();
+
+        // Check for basic-permission in root response
+        // REST API returns this as a string label (e.g., "Delete", "Write")
+        Object basicPerm = response.get("basic-permission");
+        if (basicPerm instanceof String) {
+            permissionLabel = (String) basicPerm;
+            basicPermission = PermissionUtils.labelToPermit(permissionLabel);
+            if (basicPermission < 0) {
+                basicPermission = null;
+            }
+        } else if (basicPerm instanceof Number) {
+            basicPermission = ((Number) basicPerm).intValue();
+            permissionLabel = PermissionUtils.permitToLabel(basicPermission);
+        }
+
+        // Check for extend-permissions (comma-separated string)
+        Object extendPerm = response.get("extend-permissions");
+        if (extendPerm instanceof String && !((String) extendPerm).isEmpty()) {
+            String[] parts = ((String) extendPerm).split(",");
+            for (String part : parts) {
+                String trimmed = part.trim();
+                if (!trimmed.isEmpty()) {
+                    extendedPermissions.add(trimmed);
+                }
+            }
+        }
+
+        if (basicPermission != null) {
+            objectInfo.setPermissionLevel(basicPermission);
+            objectInfo.setPermissionLabel(permissionLabel != null ?
+                    permissionLabel.toUpperCase() : PermissionUtils.permitToLabel(basicPermission));
+        }
+
+        objectInfo.setExtendedPermissions(extendedPermissions.isEmpty() ?
+                Collections.emptyList() : extendedPermissions);
     }
 }
