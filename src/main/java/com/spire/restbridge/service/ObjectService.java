@@ -19,8 +19,11 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Service for object operations via Documentum REST Services.
@@ -40,10 +43,15 @@ public class ObjectService {
     private static final int TIMEOUT_SECONDS = 30;
 
     private final SessionService sessionService;
+    private final TypeService typeService;
     private final ObjectMapper objectMapper;
 
-    public ObjectService(SessionService sessionService, ObjectMapper objectMapper) {
+    /** Cache of repeating attribute names by type name. */
+    private final Map<String, Set<String>> repeatingAttributeCache = new ConcurrentHashMap<>();
+
+    public ObjectService(SessionService sessionService, TypeService typeService, ObjectMapper objectMapper) {
         this.sessionService = sessionService;
+        this.typeService = typeService;
         this.objectMapper = objectMapper;
     }
 
@@ -172,33 +180,42 @@ public class ObjectService {
     }
 
     /**
-     * Update an object using POST /objects/{id}.
+     * Update an object using batch API to POST update + GET permissions in one request.
      */
     public ObjectInfo updateObject(String sessionId, String objectId, UpdateObjectRequest request) {
-        log.debug("Updating object {} via REST", objectId);
+        log.debug("Updating object {} via REST batch", objectId);
 
         RestSessionHolder session = sessionService.getSession(sessionId);
 
         try {
+            // Get object type to normalize repeating attributes
+            String objectType = getObjectType(session, objectId);
+            Map<String, Object> normalizedAttrs = normalizeAttributes(sessionId, objectType,
+                    request.getAttributes());
+
             Map<String, Object> payload = new HashMap<>();
-            payload.put("properties", request.getAttributes());
+            payload.put("properties", normalizedAttrs);
+
+            String payloadJson = objectMapper.writeValueAsString(payload);
+
+            Map<String, Object> batchRequest = buildWritePermissionsBatchRequest(
+                    session.getRepository(), objectId,
+                    "POST", "/repositories/" + session.getRepository() + "/objects/" + objectId,
+                    payloadJson, "updateObject");
 
             @SuppressWarnings("unchecked")
-            Map<String, Object> response = session.getWebClient().post()
-                    .uri("/repositories/{repo}/objects/{objectId}",
-                            session.getRepository(), objectId)
-                    .bodyValue(payload)
+            Map<String, Object> batchResponse = session.getWebClient().post()
+                    .uri("/repositories/{repo}/batches", session.getRepository())
+                    .bodyValue(batchRequest)
                     .retrieve()
                     .bodyToMono(Map.class)
                     .block(Duration.ofSeconds(TIMEOUT_SECONDS));
 
-            if (response == null) {
+            if (batchResponse == null) {
                 throw new RestBridgeException(ERROR_CODE, "No response from update");
             }
 
-            ObjectInfo objectInfo = extractObjectInfo(response);
-            populatePermissions(session, objectInfo);
-            return objectInfo;
+            return extractFromWriteBatchResponse(batchResponse, objectId, "updateObject");
 
         } catch (WebClientResponseException.NotFound e) {
             throw new ObjectNotFoundException(objectId);
@@ -214,29 +231,32 @@ public class ObjectService {
     }
 
     /**
-     * Checkout (lock) an object.
+     * Checkout (lock) an object using batch API to PUT lock + GET permissions in one request.
      */
     public ObjectInfo checkout(String sessionId, String objectId) {
-        log.debug("Checking out object {} via REST", objectId);
+        log.debug("Checking out object {} via REST batch", objectId);
 
         RestSessionHolder session = sessionService.getSession(sessionId);
 
         try {
+            Map<String, Object> batchRequest = buildWritePermissionsBatchRequest(
+                    session.getRepository(), objectId,
+                    "PUT", "/repositories/" + session.getRepository() + "/objects/" + objectId + "/lock",
+                    null, "checkout");
+
             @SuppressWarnings("unchecked")
-            Map<String, Object> response = session.getWebClient().put()
-                    .uri("/repositories/{repo}/objects/{objectId}/lock",
-                            session.getRepository(), objectId)
+            Map<String, Object> batchResponse = session.getWebClient().post()
+                    .uri("/repositories/{repo}/batches", session.getRepository())
+                    .bodyValue(batchRequest)
                     .retrieve()
                     .bodyToMono(Map.class)
                     .block(Duration.ofSeconds(TIMEOUT_SECONDS));
 
-            if (response == null) {
+            if (batchResponse == null) {
                 throw new RestBridgeException(ERROR_CODE, "No response from checkout");
             }
 
-            ObjectInfo objectInfo = extractObjectInfo(response);
-            populatePermissions(session, objectInfo);
-            return objectInfo;
+            return extractFromWriteBatchResponse(batchResponse, objectId, "checkout");
 
         } catch (WebClientResponseException.NotFound e) {
             throw new ObjectNotFoundException(objectId);
@@ -279,10 +299,10 @@ public class ObjectService {
     }
 
     /**
-     * Checkin an object, creating a new version.
+     * Checkin an object using batch API to POST version + GET permissions in one request.
      */
     public ObjectInfo checkin(String sessionId, String objectId, String versionLabel) {
-        log.debug("Checking in object {} via REST with label {}", objectId, versionLabel);
+        log.debug("Checking in object {} via REST batch with label {}", objectId, versionLabel);
 
         RestSessionHolder session = sessionService.getSession(sessionId);
 
@@ -290,26 +310,31 @@ public class ObjectService {
             Map<String, Object> payload = new HashMap<>();
             if (versionLabel != null && !versionLabel.isEmpty()) {
                 Map<String, Object> properties = new HashMap<>();
-                properties.put("r_version_label", versionLabel);
+                // r_version_label is a repeating attribute, must be sent as a list
+                properties.put("r_version_label", Collections.singletonList(versionLabel));
                 payload.put("properties", properties);
             }
 
+            String payloadJson = objectMapper.writeValueAsString(payload);
+
+            // Note: checkin creates a new version which may have a different object ID
+            // We fetch permissions for the new object returned by the checkin operation
+            Map<String, Object> batchRequest = buildCheckinBatchRequest(
+                    session.getRepository(), objectId, payloadJson);
+
             @SuppressWarnings("unchecked")
-            Map<String, Object> response = session.getWebClient().post()
-                    .uri("/repositories/{repo}/objects/{objectId}/versions",
-                            session.getRepository(), objectId)
-                    .bodyValue(payload)
+            Map<String, Object> batchResponse = session.getWebClient().post()
+                    .uri("/repositories/{repo}/batches", session.getRepository())
+                    .bodyValue(batchRequest)
                     .retrieve()
                     .bodyToMono(Map.class)
                     .block(Duration.ofSeconds(TIMEOUT_SECONDS));
 
-            if (response == null) {
+            if (batchResponse == null) {
                 throw new RestBridgeException(ERROR_CODE, "No response from checkin");
             }
 
-            ObjectInfo objectInfo = extractObjectInfo(response);
-            populatePermissions(session, objectInfo);
-            return objectInfo;
+            return extractFromCheckinBatchResponse(batchResponse, objectId, session);
 
         } catch (WebClientResponseException.NotFound e) {
             throw new ObjectNotFoundException(objectId);
@@ -333,6 +358,10 @@ public class ObjectService {
         RestSessionHolder session = sessionService.getSession(sessionId);
 
         try {
+            // Normalize repeating attributes based on type definition
+            Map<String, Object> normalizedAttrs = normalizeAttributes(sessionId,
+                    request.getObjectType(), request.getAttributes());
+
             Map<String, Object> payload = new HashMap<>();
             Map<String, Object> properties = new HashMap<>();
 
@@ -340,8 +369,8 @@ public class ObjectService {
             if (request.getObjectName() != null) {
                 properties.put("object_name", request.getObjectName());
             }
-            if (request.getAttributes() != null) {
-                properties.putAll(request.getAttributes());
+            if (normalizedAttrs != null) {
+                properties.putAll(normalizedAttrs);
             }
             payload.put("properties", properties);
 
@@ -468,6 +497,34 @@ public class ObjectService {
         } catch (Exception e) {
             throw new RestBridgeException(ERROR_CODE,
                     "Failed to resolve folder path: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Get the object type for an object by ID.
+     * Used to determine which attributes are repeating before updates.
+     */
+    @SuppressWarnings("unchecked")
+    private String getObjectType(RestSessionHolder session, String objectId) {
+        try {
+            Map<String, Object> response = session.getWebClient().get()
+                    .uri("/repositories/{repo}/objects/{objectId}",
+                            session.getRepository(), objectId)
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block(Duration.ofSeconds(TIMEOUT_SECONDS));
+
+            if (response != null) {
+                Map<String, Object> properties = (Map<String, Object>) response.get("properties");
+                if (properties != null) {
+                    return (String) properties.getOrDefault("r_object_type", "dm_sysobject");
+                }
+            }
+            return "dm_sysobject";
+        } catch (Exception e) {
+            log.warn("Failed to get object type for {}, defaulting to dm_sysobject: {}",
+                    objectId, e.getMessage());
+            return "dm_sysobject";
         }
     }
 
@@ -680,5 +737,261 @@ public class ObjectService {
         }
 
         return objectInfo;
+    }
+
+    /**
+     * Build a batch request to perform a write operation + GET permissions in one call.
+     * Uses sequential execution to ensure write completes before permissions fetch.
+     */
+    private Map<String, Object> buildWritePermissionsBatchRequest(
+            String repository, String objectId, String method, String uri,
+            String entityJson, String operationId) {
+
+        Map<String, Object> batch = new HashMap<>();
+        batch.put("transactional", false);
+        batch.put("sequential", true);  // Write must complete before permissions read
+        batch.put("on-error", "CONTINUE");
+
+        List<Map<String, Object>> operations = new ArrayList<>();
+
+        // Operation 1: Write operation (POST/PUT)
+        Map<String, Object> op1 = new HashMap<>();
+        op1.put("id", operationId);
+        Map<String, Object> req1 = new HashMap<>();
+        req1.put("method", method);
+        req1.put("uri", uri);
+        if (entityJson != null) {
+            req1.put("entity", entityJson);
+            List<Map<String, Object>> headers = new ArrayList<>();
+            Map<String, Object> contentTypeHeader = new HashMap<>();
+            contentTypeHeader.put("name", "Content-Type");
+            contentTypeHeader.put("value", "application/vnd.emc.documentum+json");
+            headers.add(contentTypeHeader);
+            req1.put("headers", headers);
+        }
+        op1.put("request", req1);
+        operations.add(op1);
+
+        // Operation 2: Get permissions
+        Map<String, Object> op2 = new HashMap<>();
+        op2.put("id", "getPermissions");
+        Map<String, Object> req2 = new HashMap<>();
+        req2.put("method", "GET");
+        req2.put("uri", "/repositories/" + repository + "/objects/" + objectId + "/permissions");
+        op2.put("request", req2);
+        operations.add(op2);
+
+        batch.put("operations", operations);
+        return batch;
+    }
+
+    /**
+     * Build a batch request for checkin operation.
+     * Checkin only includes the POST - permissions must be fetched separately
+     * since the new version may have a different object ID.
+     */
+    private Map<String, Object> buildCheckinBatchRequest(
+            String repository, String objectId, String entityJson) {
+
+        Map<String, Object> batch = new HashMap<>();
+        batch.put("transactional", false);
+        batch.put("sequential", false);
+        batch.put("on-error", "CONTINUE");
+
+        List<Map<String, Object>> operations = new ArrayList<>();
+
+        // Operation 1: Checkin (creates new version)
+        Map<String, Object> op1 = new HashMap<>();
+        op1.put("id", "checkin");
+        Map<String, Object> req1 = new HashMap<>();
+        req1.put("method", "POST");
+        req1.put("uri", "/repositories/" + repository + "/objects/" + objectId + "/versions?object-id=" + objectId);
+        if (entityJson != null) {
+            req1.put("entity", entityJson);
+            List<Map<String, Object>> headers = new ArrayList<>();
+            Map<String, Object> contentTypeHeader = new HashMap<>();
+            contentTypeHeader.put("name", "Content-Type");
+            contentTypeHeader.put("value", "application/vnd.emc.documentum+json");
+            headers.add(contentTypeHeader);
+            req1.put("headers", headers);
+        }
+        op1.put("request", req1);
+        operations.add(op1);
+
+        batch.put("operations", operations);
+        return batch;
+    }
+
+    /**
+     * Extract ObjectInfo and permissions from a write operation batch response.
+     */
+    @SuppressWarnings("unchecked")
+    private ObjectInfo extractFromWriteBatchResponse(
+            Map<String, Object> batchResponse, String objectId, String writeOperationId) {
+
+        List<Map<String, Object>> operations =
+                (List<Map<String, Object>>) batchResponse.get("operations");
+
+        if (operations == null || operations.isEmpty()) {
+            throw new ObjectNotFoundException(objectId);
+        }
+
+        ObjectInfo objectInfo = null;
+
+        for (Map<String, Object> operation : operations) {
+            String opId = (String) operation.get("id");
+            Map<String, Object> response = (Map<String, Object>) operation.get("response");
+
+            if (response == null) {
+                continue;
+            }
+
+            Integer status = (Integer) response.get("status");
+            String entity = (String) response.get("entity");
+
+            if (writeOperationId.equals(opId)) {
+                if (status != null && status == 404) {
+                    throw new ObjectNotFoundException(objectId);
+                }
+                if (status != null && status >= 400) {
+                    throw new RestBridgeException(ERROR_CODE,
+                            "Write operation failed with status " + status + ": " + entity);
+                }
+                if (entity != null && status != null && (status == 200 || status == 201)) {
+                    try {
+                        Map<String, Object> objectData = objectMapper.readValue(entity, Map.class);
+                        objectInfo = extractObjectInfo(objectData);
+                    } catch (JsonProcessingException e) {
+                        log.warn("Failed to parse write response: {}", e.getMessage());
+                    }
+                }
+            } else if ("getPermissions".equals(opId) && objectInfo != null) {
+                if (entity != null && status != null && status == 200) {
+                    try {
+                        Map<String, Object> permData = objectMapper.readValue(entity, Map.class);
+                        extractPermissionInfo(permData, objectInfo);
+                    } catch (JsonProcessingException e) {
+                        log.warn("Failed to parse permissions response: {}", e.getMessage());
+                    }
+                }
+            }
+        }
+
+        if (objectInfo == null) {
+            throw new RestBridgeException(ERROR_CODE, "No valid response from write operation");
+        }
+
+        return objectInfo;
+    }
+
+    /**
+     * Extract ObjectInfo from checkin batch response.
+     * Checkin creates a new version which may have a different object ID,
+     * so we fetch permissions separately for the new object.
+     */
+    @SuppressWarnings("unchecked")
+    private ObjectInfo extractFromCheckinBatchResponse(
+            Map<String, Object> batchResponse, String originalObjectId, RestSessionHolder session) {
+
+        List<Map<String, Object>> operations =
+                (List<Map<String, Object>>) batchResponse.get("operations");
+
+        if (operations == null || operations.isEmpty()) {
+            throw new ObjectNotFoundException(originalObjectId);
+        }
+
+        ObjectInfo objectInfo = null;
+
+        for (Map<String, Object> operation : operations) {
+            String opId = (String) operation.get("id");
+            Map<String, Object> response = (Map<String, Object>) operation.get("response");
+
+            if (response == null) {
+                continue;
+            }
+
+            Integer status = (Integer) response.get("status");
+            String entity = (String) response.get("entity");
+
+            if ("checkin".equals(opId)) {
+                if (status != null && status == 404) {
+                    throw new ObjectNotFoundException(originalObjectId);
+                }
+                if (status != null && status >= 400) {
+                    throw new RestBridgeException(ERROR_CODE,
+                            "Checkin failed with status " + status + ": " + entity);
+                }
+                if (entity != null && status != null && (status == 200 || status == 201)) {
+                    try {
+                        Map<String, Object> objectData = objectMapper.readValue(entity, Map.class);
+                        objectInfo = extractObjectInfo(objectData);
+                    } catch (JsonProcessingException e) {
+                        log.warn("Failed to parse checkin response: {}", e.getMessage());
+                    }
+                }
+            }
+        }
+
+        if (objectInfo == null) {
+            throw new RestBridgeException(ERROR_CODE, "No valid response from checkin operation");
+        }
+
+        // Fetch permissions for the new version (may have different object ID)
+        populatePermissions(session, objectInfo);
+
+        return objectInfo;
+    }
+
+    /**
+     * Get the set of repeating attribute names for a type, using cache.
+     */
+    private Set<String> getRepeatingAttributes(String sessionId, String typeName) {
+        return repeatingAttributeCache.computeIfAbsent(typeName, t -> {
+            try {
+                TypeInfo typeInfo = typeService.getTypeInfo(sessionId, t);
+                Set<String> repeating = new HashSet<>();
+                for (TypeInfo.AttributeInfo attr : typeInfo.getAttributes()) {
+                    if (attr.isRepeating()) {
+                        repeating.add(attr.getName());
+                    }
+                }
+                log.debug("Cached {} repeating attributes for type {}", repeating.size(), t);
+                return repeating;
+            } catch (Exception e) {
+                log.warn("Failed to get type info for {}, attributes will not be normalized: {}",
+                        t, e.getMessage());
+                return Collections.emptySet();
+            }
+        });
+    }
+
+    /**
+     * Normalize attributes for a given type, ensuring repeating attributes are lists.
+     * If an attribute is repeating but the value is a scalar, wrap it in a list.
+     */
+    private Map<String, Object> normalizeAttributes(String sessionId, String typeName,
+                                                     Map<String, Object> attributes) {
+        if (attributes == null || attributes.isEmpty()) {
+            return attributes;
+        }
+
+        Set<String> repeatingAttrs = getRepeatingAttributes(sessionId, typeName);
+        if (repeatingAttrs.isEmpty()) {
+            return attributes;
+        }
+
+        Map<String, Object> normalized = new HashMap<>(attributes);
+        for (Map.Entry<String, Object> entry : normalized.entrySet()) {
+            String attrName = entry.getKey();
+            Object value = entry.getValue();
+
+            if (repeatingAttrs.contains(attrName) && value != null && !(value instanceof List)) {
+                // Wrap scalar value in a list for repeating attribute
+                normalized.put(attrName, Collections.singletonList(value));
+                log.debug("Normalized repeating attribute {} from scalar to list", attrName);
+            }
+        }
+
+        return normalized;
     }
 }
