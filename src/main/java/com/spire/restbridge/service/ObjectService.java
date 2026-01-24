@@ -4,6 +4,7 @@ import com.spire.restbridge.dto.CreateObjectRequest;
 import com.spire.restbridge.dto.UpdateObjectRequest;
 import com.spire.restbridge.exception.ObjectNotFoundException;
 import com.spire.restbridge.exception.RestBridgeException;
+import com.spire.restbridge.model.AttributeValue;
 import com.spire.restbridge.model.ObjectInfo;
 import com.spire.restbridge.model.TypeInfo;
 import com.spire.restbridge.util.PermissionUtils;
@@ -46,8 +47,19 @@ public class ObjectService {
     private final TypeService typeService;
     private final ObjectMapper objectMapper;
 
-    /** Cache of repeating attribute names by type name. */
-    private final Map<String, Set<String>> repeatingAttributeCache = new ConcurrentHashMap<>();
+    /** Cache of attribute metadata (type and repeating) by type name. */
+    private final Map<String, Map<String, AttrMeta>> attributeMetaCache = new ConcurrentHashMap<>();
+
+    /** Internal class to hold attribute metadata. */
+    private static class AttrMeta {
+        final String type;
+        final boolean repeating;
+
+        AttrMeta(String type, boolean repeating) {
+            this.type = type;
+            this.repeating = repeating;
+        }
+    }
 
     public ObjectService(SessionService sessionService, TypeService typeService, ObjectMapper objectMapper) {
         this.sessionService = sessionService;
@@ -79,7 +91,7 @@ public class ObjectService {
                 throw new ObjectNotFoundException(objectId);
             }
 
-            return extractFromBatchResponse(batchResponse, objectId);
+            return extractFromBatchResponse(batchResponse, objectId, sessionId);
 
         } catch (WebClientResponseException.NotFound e) {
             throw new ObjectNotFoundException(objectId);
@@ -215,7 +227,7 @@ public class ObjectService {
                 throw new RestBridgeException(ERROR_CODE, "No response from update");
             }
 
-            return extractFromWriteBatchResponse(batchResponse, objectId, "updateObject");
+            return extractFromWriteBatchResponse(batchResponse, objectId, "updateObject", sessionId);
 
         } catch (WebClientResponseException.NotFound e) {
             throw new ObjectNotFoundException(objectId);
@@ -256,7 +268,7 @@ public class ObjectService {
                 throw new RestBridgeException(ERROR_CODE, "No response from checkout");
             }
 
-            return extractFromWriteBatchResponse(batchResponse, objectId, "checkout");
+            return extractFromWriteBatchResponse(batchResponse, objectId, "checkout", sessionId);
 
         } catch (WebClientResponseException.NotFound e) {
             throw new ObjectNotFoundException(objectId);
@@ -334,7 +346,7 @@ public class ObjectService {
                 throw new RestBridgeException(ERROR_CODE, "No response from checkin");
             }
 
-            return extractFromCheckinBatchResponse(batchResponse, objectId, session);
+            return extractFromCheckinBatchResponse(batchResponse, objectId, session, sessionId);
 
         } catch (WebClientResponseException.NotFound e) {
             throw new ObjectNotFoundException(objectId);
@@ -410,7 +422,7 @@ public class ObjectService {
                 throw new RestBridgeException(ERROR_CODE, "No response from create");
             }
 
-            ObjectInfo objectInfo = extractObjectInfo(response);
+            ObjectInfo objectInfo = extractObjectInfoWithSession(response, sessionId);
             populatePermissions(session, objectInfo);
             return objectInfo;
 
@@ -530,6 +542,11 @@ public class ObjectService {
 
     @SuppressWarnings("unchecked")
     private ObjectInfo extractObjectInfo(Map<String, Object> response) {
+        return extractObjectInfoWithSession(response, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private ObjectInfo extractObjectInfoWithSession(Map<String, Object> response, String sessionId) {
         Map<String, Object> content = (Map<String, Object>) response.get("content");
         if (content == null) {
             content = response;
@@ -541,15 +558,202 @@ public class ObjectService {
         }
 
         String objectId = (String) properties.getOrDefault("r_object_id", "");
-        String type = (String) properties.getOrDefault("r_object_type", "");
+        String typeName = (String) properties.getOrDefault("r_object_type", "");
         String name = (String) properties.getOrDefault("object_name", "");
+
+        // Pre-populate attribute metadata cache if we have a session
+        if (sessionId != null && !typeName.isEmpty()) {
+            getAttributeMetadataWithSession(sessionId, typeName);
+        }
+
+        // Build attributes with type metadata
+        Map<String, AttributeValue> attributes = buildAttributesWithMetadata(properties, typeName);
 
         return ObjectInfo.builder()
                 .objectId(objectId)
-                .type(type)
+                .type(typeName)
                 .name(name)
-                .attributes(properties)
+                .attributes(attributes)
                 .build();
+    }
+
+    /**
+     * Build attributes map with type metadata from properties.
+     */
+    private Map<String, AttributeValue> buildAttributesWithMetadata(
+            Map<String, Object> properties, String typeName) {
+
+        Map<String, AttributeValue> attributes = new HashMap<>();
+
+        // Get attribute metadata for this type (uses cache)
+        Map<String, AttrMeta> attrMeta = getAttributeMetadata(typeName);
+
+        for (Map.Entry<String, Object> entry : properties.entrySet()) {
+            String attrName = entry.getKey();
+            Object value = entry.getValue();
+
+            AttrMeta meta = attrMeta.get(attrName);
+            String type = "string";  // Default
+            boolean repeating = false;
+
+            if (meta != null) {
+                type = meta.type;
+                repeating = meta.repeating;
+            } else {
+                // Infer from value if no metadata available
+                type = inferType(attrName, value);
+                repeating = value instanceof List;
+            }
+
+            // Ensure ID types are returned as strings
+            if ("id".equals(type)) {
+                value = ensureIdAsString(value);
+            }
+
+            attributes.put(attrName, AttributeValue.builder()
+                    .type(type)
+                    .value(value)
+                    .repeating(repeating)
+                    .build());
+        }
+
+        return attributes;
+    }
+
+    /**
+     * Ensure ID values are returned as strings, not floats.
+     */
+    private Object ensureIdAsString(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof List) {
+            List<?> list = (List<?>) value;
+            List<String> result = new ArrayList<>();
+            for (Object item : list) {
+                result.add(ensureSingleIdAsString(item));
+            }
+            return result;
+        }
+        return ensureSingleIdAsString(value);
+    }
+
+    private String ensureSingleIdAsString(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof String) {
+            return (String) value;
+        }
+        if (value instanceof Number) {
+            // Convert numeric ID to string, removing decimal places
+            double d = ((Number) value).doubleValue();
+            return String.format("%.0f", d);
+        }
+        return value.toString();
+    }
+
+    /**
+     * Infer type from attribute name and value when metadata is not available.
+     */
+    private String inferType(String attrName, Object value) {
+        if (value == null) {
+            // Check if name suggests ID type
+            if (isIdAttribute(attrName)) {
+                return "id";
+            }
+            return "string";
+        }
+
+        Object checkValue = value;
+        if (value instanceof List) {
+            List<?> list = (List<?>) value;
+            if (list.isEmpty()) {
+                if (isIdAttribute(attrName)) {
+                    return "id";
+                }
+                return "string";
+            }
+            checkValue = list.get(0);
+        }
+
+        if (checkValue instanceof Boolean) {
+            return "boolean";
+        }
+        if (checkValue instanceof Integer || checkValue instanceof Long) {
+            return "integer";
+        }
+        if (checkValue instanceof Double || checkValue instanceof Float) {
+            return "double";
+        }
+        // Check if name suggests ID type
+        if (isIdAttribute(attrName)) {
+            return "id";
+        }
+        return "string";
+    }
+
+    /**
+     * Normalize DCTM REST type names to standard type names.
+     * REST API returns types like "dm_string", we normalize to "string".
+     * Note: REST API returns ID attributes as "string", we detect them by name.
+     */
+    private String normalizeTypeName(String dctmType) {
+        return normalizeTypeName(dctmType, null);
+    }
+
+    /**
+     * Normalize DCTM REST type names to standard type names, with attribute name context.
+     * REST API returns ID attributes as "string", we detect them by name pattern.
+     */
+    private String normalizeTypeName(String dctmType, String attrName) {
+        if (dctmType == null) {
+            return "string";
+        }
+
+        // Remove dm_ prefix if present
+        String normalized = dctmType.toLowerCase();
+        if (normalized.startsWith("dm_")) {
+            normalized = normalized.substring(3);
+        }
+
+        // Map to standard types
+        switch (normalized) {
+            case "boolean":
+                return "boolean";
+            case "integer":
+            case "int":
+                return "integer";
+            case "double":
+            case "float":
+                return "double";
+            case "id":
+                return "id";
+            case "time":
+            case "date":
+            case "datetime":
+                return "time";
+            case "string":
+                // DCTM REST returns ID attributes as "string", detect by name
+                if (attrName != null && isIdAttribute(attrName)) {
+                    return "id";
+                }
+                return "string";
+            default:
+                return "string";
+        }
+    }
+
+    /**
+     * Check if an attribute name indicates an ID type.
+     * Common ID attributes end with _id or are r_object_id.
+     */
+    private boolean isIdAttribute(String attrName) {
+        if (attrName == null) {
+            return false;
+        }
+        // ID attributes typically end with _id
+        return attrName.endsWith("_id");
     }
 
     /**
@@ -687,7 +891,8 @@ public class ObjectService {
      * Extract ObjectInfo and permissions from a batch response.
      */
     @SuppressWarnings("unchecked")
-    private ObjectInfo extractFromBatchResponse(Map<String, Object> batchResponse, String objectId) {
+    private ObjectInfo extractFromBatchResponse(Map<String, Object> batchResponse, String objectId,
+                                                 String sessionId) {
         List<Map<String, Object>> operations =
                 (List<Map<String, Object>>) batchResponse.get("operations");
 
@@ -715,7 +920,7 @@ public class ObjectService {
                 if (entity != null && status != null && status == 200) {
                     try {
                         Map<String, Object> objectData = objectMapper.readValue(entity, Map.class);
-                        objectInfo = extractObjectInfo(objectData);
+                        objectInfo = extractObjectInfoWithSession(objectData, sessionId);
                     } catch (JsonProcessingException e) {
                         log.warn("Failed to parse object response: {}", e.getMessage());
                     }
@@ -827,7 +1032,8 @@ public class ObjectService {
      */
     @SuppressWarnings("unchecked")
     private ObjectInfo extractFromWriteBatchResponse(
-            Map<String, Object> batchResponse, String objectId, String writeOperationId) {
+            Map<String, Object> batchResponse, String objectId, String writeOperationId,
+            String sessionId) {
 
         List<Map<String, Object>> operations =
                 (List<Map<String, Object>>) batchResponse.get("operations");
@@ -860,7 +1066,7 @@ public class ObjectService {
                 if (entity != null && status != null && (status == 200 || status == 201)) {
                     try {
                         Map<String, Object> objectData = objectMapper.readValue(entity, Map.class);
-                        objectInfo = extractObjectInfo(objectData);
+                        objectInfo = extractObjectInfoWithSession(objectData, sessionId);
                     } catch (JsonProcessingException e) {
                         log.warn("Failed to parse write response: {}", e.getMessage());
                     }
@@ -891,7 +1097,8 @@ public class ObjectService {
      */
     @SuppressWarnings("unchecked")
     private ObjectInfo extractFromCheckinBatchResponse(
-            Map<String, Object> batchResponse, String originalObjectId, RestSessionHolder session) {
+            Map<String, Object> batchResponse, String originalObjectId, RestSessionHolder session,
+            String sessionId) {
 
         List<Map<String, Object>> operations =
                 (List<Map<String, Object>>) batchResponse.get("operations");
@@ -924,7 +1131,7 @@ public class ObjectService {
                 if (entity != null && status != null && (status == 200 || status == 201)) {
                     try {
                         Map<String, Object> objectData = objectMapper.readValue(entity, Map.class);
-                        objectInfo = extractObjectInfo(objectData);
+                        objectInfo = extractObjectInfoWithSession(objectData, sessionId);
                     } catch (JsonProcessingException e) {
                         log.warn("Failed to parse checkin response: {}", e.getMessage());
                     }
@@ -946,21 +1153,46 @@ public class ObjectService {
      * Get the set of repeating attribute names for a type, using cache.
      */
     private Set<String> getRepeatingAttributes(String sessionId, String typeName) {
-        return repeatingAttributeCache.computeIfAbsent(typeName, t -> {
+        Map<String, AttrMeta> meta = getAttributeMetadataWithSession(sessionId, typeName);
+        Set<String> repeating = new HashSet<>();
+        for (Map.Entry<String, AttrMeta> entry : meta.entrySet()) {
+            if (entry.getValue().repeating) {
+                repeating.add(entry.getKey());
+            }
+        }
+        return repeating;
+    }
+
+    /**
+     * Get attribute metadata for a type, using cache. Uses stored session if available.
+     */
+    private Map<String, AttrMeta> getAttributeMetadata(String typeName) {
+        Map<String, AttrMeta> cached = attributeMetaCache.get(typeName);
+        if (cached != null) {
+            return cached;
+        }
+        // Return empty if not cached and no session context
+        log.debug("No cached metadata for type {}, returning empty", typeName);
+        return Collections.emptyMap();
+    }
+
+    /**
+     * Get attribute metadata for a type with session context, populating cache.
+     */
+    private Map<String, AttrMeta> getAttributeMetadataWithSession(String sessionId, String typeName) {
+        return attributeMetaCache.computeIfAbsent(typeName, t -> {
             try {
                 TypeInfo typeInfo = typeService.getTypeInfo(sessionId, t);
-                Set<String> repeating = new HashSet<>();
+                Map<String, AttrMeta> metadata = new HashMap<>();
                 for (TypeInfo.AttributeInfo attr : typeInfo.getAttributes()) {
-                    if (attr.isRepeating()) {
-                        repeating.add(attr.getName());
-                    }
+                    String normalizedType = normalizeTypeName(attr.getDataType(), attr.getName());
+                    metadata.put(attr.getName(), new AttrMeta(normalizedType, attr.isRepeating()));
                 }
-                log.debug("Cached {} repeating attributes for type {}", repeating.size(), t);
-                return repeating;
+                log.debug("Cached {} attributes for type {}", metadata.size(), t);
+                return metadata;
             } catch (Exception e) {
-                log.warn("Failed to get type info for {}, attributes will not be normalized: {}",
-                        t, e.getMessage());
-                return Collections.emptySet();
+                log.warn("Failed to get type info for {}: {}", t, e.getMessage());
+                return Collections.emptyMap();
             }
         });
     }
