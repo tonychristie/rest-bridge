@@ -601,13 +601,8 @@ public class ObjectService {
                 repeating = meta.repeating;
             } else {
                 // Infer from value if no metadata available
-                type = inferType(attrName, value);
+                type = inferType(value);
                 repeating = value instanceof List;
-            }
-
-            // Ensure ID types are returned as strings
-            if ("id".equals(type)) {
-                value = ensureIdAsString(value);
             }
 
             attributes.put(attrName, AttributeValue.builder()
@@ -621,47 +616,10 @@ public class ObjectService {
     }
 
     /**
-     * Ensure ID values are returned as strings, not floats.
+     * Infer type from value when metadata is not available.
      */
-    private Object ensureIdAsString(Object value) {
+    private String inferType(Object value) {
         if (value == null) {
-            return null;
-        }
-        if (value instanceof List) {
-            List<?> list = (List<?>) value;
-            List<String> result = new ArrayList<>();
-            for (Object item : list) {
-                result.add(ensureSingleIdAsString(item));
-            }
-            return result;
-        }
-        return ensureSingleIdAsString(value);
-    }
-
-    private String ensureSingleIdAsString(Object value) {
-        if (value == null) {
-            return null;
-        }
-        if (value instanceof String) {
-            return (String) value;
-        }
-        if (value instanceof Number) {
-            // Convert numeric ID to string, removing decimal places
-            double d = ((Number) value).doubleValue();
-            return String.format("%.0f", d);
-        }
-        return value.toString();
-    }
-
-    /**
-     * Infer type from attribute name and value when metadata is not available.
-     */
-    private String inferType(String attrName, Object value) {
-        if (value == null) {
-            // Check if name suggests ID type
-            if (isIdAttribute(attrName)) {
-                return "id";
-            }
             return "string";
         }
 
@@ -669,9 +627,6 @@ public class ObjectService {
         if (value instanceof List) {
             List<?> list = (List<?>) value;
             if (list.isEmpty()) {
-                if (isIdAttribute(attrName)) {
-                    return "id";
-                }
                 return "string";
             }
             checkValue = list.get(0);
@@ -686,27 +641,14 @@ public class ObjectService {
         if (checkValue instanceof Double || checkValue instanceof Float) {
             return "double";
         }
-        // Check if name suggests ID type
-        if (isIdAttribute(attrName)) {
-            return "id";
-        }
         return "string";
     }
 
     /**
      * Normalize DCTM REST type names to standard type names.
      * REST API returns types like "dm_string", we normalize to "string".
-     * Note: REST API returns ID attributes as "string", we detect them by name.
      */
     private String normalizeTypeName(String dctmType) {
-        return normalizeTypeName(dctmType, null);
-    }
-
-    /**
-     * Normalize DCTM REST type names to standard type names, with attribute name context.
-     * REST API returns ID attributes as "string", we detect them by name pattern.
-     */
-    private String normalizeTypeName(String dctmType, String attrName) {
         if (dctmType == null) {
             return "string";
         }
@@ -733,27 +675,9 @@ public class ObjectService {
             case "date":
             case "datetime":
                 return "time";
-            case "string":
-                // DCTM REST returns ID attributes as "string", detect by name
-                if (attrName != null && isIdAttribute(attrName)) {
-                    return "id";
-                }
-                return "string";
             default:
                 return "string";
         }
-    }
-
-    /**
-     * Check if an attribute name indicates an ID type.
-     * Common ID attributes end with _id or are r_object_id.
-     */
-    private boolean isIdAttribute(String attrName) {
-        if (attrName == null) {
-            return false;
-        }
-        // ID attributes typically end with _id
-        return attrName.endsWith("_id");
     }
 
     /**
@@ -1185,7 +1109,7 @@ public class ObjectService {
                 TypeInfo typeInfo = typeService.getTypeInfo(sessionId, t);
                 Map<String, AttrMeta> metadata = new HashMap<>();
                 for (TypeInfo.AttributeInfo attr : typeInfo.getAttributes()) {
-                    String normalizedType = normalizeTypeName(attr.getDataType(), attr.getName());
+                    String normalizedType = normalizeTypeName(attr.getDataType());
                     metadata.put(attr.getName(), new AttrMeta(normalizedType, attr.isRepeating()));
                 }
                 log.debug("Cached {} attributes for type {}", metadata.size(), t);
