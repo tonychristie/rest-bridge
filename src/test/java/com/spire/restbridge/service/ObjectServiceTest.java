@@ -23,6 +23,9 @@ class ObjectServiceTest {
     @Mock
     private SessionService sessionService;
 
+    @Mock
+    private TypeService typeService;
+
     private ObjectMapper objectMapper = new ObjectMapper();
 
     private ObjectService objectService;
@@ -30,7 +33,7 @@ class ObjectServiceTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        objectService = new ObjectService(sessionService, objectMapper);
+        objectService = new ObjectService(sessionService, typeService, objectMapper);
     }
 
     @Test
