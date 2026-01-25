@@ -59,7 +59,7 @@ cd rest-bridge
 # Build with Maven
 mvn clean package
 
-# The JAR will be in target/rest-bridge-1.3.0.jar
+# The JAR will be in target/rest-bridge-1.4.0.jar
 ```
 
 ## Running
@@ -73,19 +73,19 @@ mvn spring-boot:run
 ### Using the JAR
 
 ```bash
-java -jar target/rest-bridge-1.3.0.jar
+java -jar target/rest-bridge-1.4.0.jar
 ```
 
 ### Specifying a custom port
 
 ```bash
-java -jar target/rest-bridge-1.3.0.jar --server.port=8080
+java -jar target/rest-bridge-1.4.0.jar --server.port=8080
 ```
 
 Or via environment variable:
 ```bash
 export SERVER_PORT=8080
-java -jar target/rest-bridge-1.3.0.jar
+java -jar target/rest-bridge-1.4.0.jar
 ```
 
 ## Configuration
@@ -259,7 +259,7 @@ Response:
 ```json
 {
   "service": "rest-bridge",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "backend": "REST",
   "description": "Documentum REST Services bridge - uses native REST API endpoints"
 }
