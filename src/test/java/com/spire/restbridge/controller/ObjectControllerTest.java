@@ -1,6 +1,7 @@
 package com.spire.restbridge.controller;
 
 import com.spire.restbridge.exception.ObjectNotFoundException;
+import com.spire.restbridge.model.AttributeValue;
 import com.spire.restbridge.model.ObjectInfo;
 import com.spire.restbridge.model.TypeInfo;
 import com.spire.restbridge.service.ObjectService;
@@ -41,9 +42,11 @@ class ObjectControllerTest {
 
     @Test
     void getObject_existingObject_returnsObject() {
-        Map<String, Object> attrs = new HashMap<>();
-        attrs.put("object_name", "test.txt");
-        attrs.put("r_object_type", "dm_document");
+        Map<String, AttributeValue> attrs = new HashMap<>();
+        attrs.put("object_name", AttributeValue.builder()
+                .type("string").value("test.txt").repeating(false).build());
+        attrs.put("r_object_type", AttributeValue.builder()
+                .type("string").value("dm_document").repeating(false).build());
 
         ObjectInfo object = ObjectInfo.builder()
             .objectId("0901234567890001")
@@ -60,6 +63,12 @@ class ObjectControllerTest {
         assertEquals("0901234567890001", response.getBody().getObjectId());
         assertEquals("test.txt", response.getBody().getName());
         assertEquals("dm_document", response.getBody().getType());
+        // Verify attribute format includes type metadata
+        AttributeValue nameAttr = response.getBody().getAttributes().get("object_name");
+        assertNotNull(nameAttr);
+        assertEquals("string", nameAttr.getType());
+        assertEquals("test.txt", nameAttr.getValue());
+        assertFalse(nameAttr.isRepeating());
     }
 
     @Test
