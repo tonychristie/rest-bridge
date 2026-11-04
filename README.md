@@ -141,9 +141,19 @@ Once running, access the Swagger UI at:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/v1/objects/{id}` | Get object by r_object_id |
-| PUT | `/api/v1/objects/{id}` | Update object attributes |
+| POST | `/api/v1/objects/{id}` | Update object attributes |
+| POST | `/api/v1/objects` | Create object |
+| DELETE | `/api/v1/objects/{id}` | Delete object (`allVersions=true` deletes all versions) |
 | GET | `/api/v1/cabinets` | List cabinets |
-| GET | `/api/v1/folders/{id}/objects` | List folder contents |
+| GET | `/api/v1/objects/{id}/contents` | List folder contents |
+
+### Version Control Operations
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| PUT | `/api/v1/objects/{id}/lock` | Check out object |
+| DELETE | `/api/v1/objects/{id}/lock` | Cancel checkout |
+| POST | `/api/v1/objects/{id}/versions` | Check in object (optional `versionLabel`, default `CURRENT`) |
 
 ### Type Operations
 
@@ -158,8 +168,10 @@ Once running, access the Swagger UI at:
 |--------|----------|-------------|
 | GET | `/api/v1/users` | List users |
 | GET | `/api/v1/users/{userName}` | Get user info |
+| GET | `/api/v1/users/{userName}/groups` | List groups that contain the user |
 | GET | `/api/v1/groups` | List groups |
 | GET | `/api/v1/groups/{groupName}` | Get group info |
+| GET | `/api/v1/groups/{groupName}/parents` | List groups that contain the group |
 
 > **Note:** User and group operations use native REST endpoints (`/users`, `/groups`) instead of DQL, making them available even when DQL is disabled.
 
@@ -245,7 +257,7 @@ curl http://localhost:9877/health
 Response:
 ```json
 {
-  "status": "UP"
+  "status": "ok"
 }
 ```
 
