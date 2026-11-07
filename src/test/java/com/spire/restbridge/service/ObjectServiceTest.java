@@ -183,6 +183,92 @@ class ObjectServiceTest {
     }
 
     @Test
+    void checkin_postsToChronicleWithCheckedOutVersionAsObjectId() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            enqueueCheckin(server);
+            server.start();
+            mockSession(server);
+
+            objectService.checkin("session-1", "0901234567890002", "CURRENT");
+
+            RecordedRequest lookup = server.takeRequest();
+            assertEquals("/repositories/testrepo/objects/0901234567890002?view=i_chronicle_id&links=false",
+                    lookup.getPath());
+            RecordedRequest checkin = server.takeRequest();
+            assertEquals("POST", checkin.getMethod());
+            assertEquals("/repositories/testrepo/objects/0901234567890001/versions?object-id=0901234567890002",
+                    checkin.getPath());
+        }
+    }
+
+    @Test
+    void checkin_withLabel_sendsVersionLabel() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            enqueueCheckin(server);
+            server.start();
+            mockSession(server);
+
+            objectService.checkin("session-1", "0901234567890002", "review");
+
+            server.takeRequest();
+            assertEquals("/repositories/testrepo/objects/0901234567890001/versions"
+                    + "?object-id=0901234567890002&version-label=review", server.takeRequest().getPath());
+        }
+    }
+
+    @Test
+    void checkin_withCurrentLabel_sendsNoVersionLabel() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            enqueueCheckin(server);
+            server.start();
+            mockSession(server);
+
+            objectService.checkin("session-1", "0901234567890002", "CURRENT");
+
+            server.takeRequest();
+            assertFalse(server.takeRequest().getPath().contains("version-label"));
+        }
+    }
+
+    @Test
+    void checkin_returnsNewVersionWithItsPermissions() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            enqueueCheckin(server);
+            server.start();
+            mockSession(server);
+
+            ObjectInfo result = objectService.checkin("session-1", "0901234567890002", "CURRENT");
+
+            assertEquals("0901234567890003", result.getObjectId());
+            assertEquals(7, result.getPermissionLevel());
+            server.takeRequest();
+            server.takeRequest();
+            assertEquals("/repositories/testrepo/objects/0901234567890003/permissions",
+                    server.takeRequest().getPath());
+        }
+    }
+
+    @Test
+    void checkin_chronicleLookupNotFound_throwsObjectNotFoundAndSendsNoCheckin() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setResponseCode(404));
+            server.start();
+            mockSession(server);
+
+            assertThrows(ObjectNotFoundException.class, () ->
+                    objectService.checkin("session-1", "0901234567890002", "CURRENT"));
+            assertEquals(1, server.getRequestCount());
+        }
+    }
+
+    private static void enqueueCheckin(MockWebServer server) {
+        server.enqueue(jsonResponse("{\"properties\": {\"i_chronicle_id\": \"0901234567890001\"}}"));
+        server.enqueue(jsonResponse("{\"properties\": {\"r_object_id\": \"0901234567890003\", "
+                + "\"r_object_type\": \"dm_document\"}}"));
+        server.enqueue(jsonResponse("{\"basic-permission\": \"Delete\"}"));
+    }
+
+    @Test
     void createObject_invalidSession_throwsException() {
         when(sessionService.getSession("invalid-session"))
             .thenThrow(new SessionNotFoundException("invalid-session"));
