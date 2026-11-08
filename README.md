@@ -18,7 +18,7 @@ Client Application (e.g., VS Code Extension)
     │ (Spring Boot)│
     └──────────────┘
            │
-           │ HTTP/REST (WebClient)
+           │ HTTP/REST (RestTemplate)
            ▼
     ┌──────────────────────┐
     │ Documentum REST      │

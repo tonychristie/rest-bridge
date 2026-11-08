@@ -1,7 +1,6 @@
 package com.spire.restbridge.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.spire.restbridge.config.RestBridgeProperties;
 import com.spire.restbridge.dto.CreateObjectRequest;
 import com.spire.restbridge.dto.UpdateObjectRequest;
 import com.spire.restbridge.exception.ObjectNotFoundException;
@@ -18,7 +17,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.List;
 import java.util.Map;
@@ -45,7 +43,7 @@ class ObjectServiceTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         objectService = new ObjectService(sessionService, typeService,
-                new RestServicesClient(new RestBridgeProperties()), objectMapper);
+                new RestServicesClient(), objectMapper);
     }
 
     @Test
@@ -291,9 +289,9 @@ class ObjectServiceTest {
     }
 
     private void mockSession(MockWebServer server, String sessionId) {
-        RestSessionHolder session = new RestSessionHolder();
+        RestSessionHolder session = SessionService.createSessionHolder(server.url("/").toString(),
+                "test01", "secret", 30);
         session.setRepository("testrepo");
-        session.setWebClient(WebClient.create(server.url("/").toString()));
         session.setSessionInfo(SessionInfo.builder().sessionId(sessionId).build());
         when(sessionService.getSession(sessionId)).thenReturn(session);
     }
