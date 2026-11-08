@@ -1,7 +1,5 @@
 package com.spire.restbridge.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.spire.restbridge.dto.CreateObjectRequest;
 import com.spire.restbridge.dto.UpdateObjectRequest;
 import com.spire.restbridge.exception.ObjectNotFoundException;
@@ -19,6 +17,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpStatus;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 import java.util.Map;
@@ -454,12 +454,12 @@ class ObjectServiceTest {
             assertTrue(body.get("sequential").asBoolean());
             JsonNode operations = body.get("operations");
             assertEquals(2, operations.size());
-            assertEquals("PUT", operations.get(0).get("request").get("method").asText());
+            assertEquals("PUT", operations.get(0).get("request").get("method").asString());
             assertEquals("/repositories/testrepo/objects/0901234567890001/lock",
-                    operations.get(0).get("request").get("uri").asText());
-            assertEquals("GET", operations.get(1).get("request").get("method").asText());
+                    operations.get(0).get("request").get("uri").asString());
+            assertEquals("GET", operations.get(1).get("request").get("method").asString());
             assertEquals("/repositories/testrepo/objects/0901234567890001/permissions",
-                    operations.get(1).get("request").get("uri").asText());
+                    operations.get(1).get("request").get("uri").asString());
         }
     }
 

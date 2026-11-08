@@ -1,6 +1,5 @@
 package com.spire.restbridge.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.spire.restbridge.dto.CreateObjectRequest;
 import com.spire.restbridge.dto.UpdateObjectRequest;
 import com.spire.restbridge.exception.ObjectNotFoundException;
@@ -13,11 +12,12 @@ import com.spire.restbridge.service.TypeService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -45,10 +45,10 @@ class ObjectControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockBean
+    @MockitoBean
     private ObjectService objectService;
 
-    @MockBean
+    @MockitoBean
     private TypeService typeService;
 
     @Test

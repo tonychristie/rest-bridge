@@ -1,6 +1,5 @@
 package com.spire.restbridge.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.spire.restbridge.dto.ConnectRequest;
 import com.spire.restbridge.dto.ConnectResponse;
 import com.spire.restbridge.dto.DisconnectRequest;
@@ -14,11 +13,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -41,7 +41,7 @@ class SessionControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockBean
+    @MockitoBean
     private SessionService sessionService;
 
     private Map<String, String> connectBody() {

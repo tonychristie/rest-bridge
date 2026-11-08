@@ -15,8 +15,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -633,7 +633,7 @@ public class ObjectService {
     private String toJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalArgumentException(e.getMessage(), e);
         }
     }
@@ -667,7 +667,7 @@ public class ObjectService {
                 try {
                     Map<String, Object> objectData = objectMapper.readValue(entity, Map.class);
                     objectInfo = extractObjectInfoWithSession(objectData, session);
-                } catch (JsonProcessingException e) {
+                } catch (JacksonException e) {
                     log.warn("Failed to parse {} response: {}", operationId, e.getMessage());
                 }
             }
@@ -683,7 +683,7 @@ public class ObjectService {
             try {
                 Map<String, Object> permData = objectMapper.readValue(permissions.getEntity(), Map.class);
                 extractPermissionInfo(permData, objectInfo);
-            } catch (JsonProcessingException e) {
+            } catch (JacksonException e) {
                 log.warn("Failed to parse permissions response: {}", e.getMessage());
             }
         }

@@ -1,6 +1,5 @@
 package com.spire.restbridge.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.spire.restbridge.dto.DqlRequest;
 import com.spire.restbridge.exception.AggregateQueryNotSupportedException;
 import com.spire.restbridge.exception.DqlNotAvailableException;
@@ -9,10 +8,11 @@ import com.spire.restbridge.service.DqlService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.Collections;
 
@@ -35,7 +35,7 @@ class DqlControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockBean
+    @MockitoBean
     private DqlService dqlService;
 
     private DqlRequest.DqlRequestBuilder request() {
@@ -102,6 +102,17 @@ class DqlControllerTest {
         mockMvc.perform(post("/api/v1/dql")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request().maxRows(0).build())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+
+        verifyNoInteractions(dqlService);
+    }
+
+    @Test
+    void executeQuery_nullMaxRows_returns400() throws Exception {
+        mockMvc.perform(post("/api/v1/dql")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sessionId\":\"" + SESSION_ID + "\",\"query\":\"" + QUERY + "\",\"maxRows\":null}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
 
