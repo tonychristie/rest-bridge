@@ -1,6 +1,7 @@
 package com.spire.restbridge.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.spire.restbridge.config.RestBridgeProperties;
 import com.spire.restbridge.dto.CreateObjectRequest;
 import com.spire.restbridge.dto.UpdateObjectRequest;
 import com.spire.restbridge.exception.ObjectNotFoundException;
@@ -43,7 +44,8 @@ class ObjectServiceTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        objectService = new ObjectService(sessionService, typeService, objectMapper);
+        objectService = new ObjectService(sessionService, typeService,
+                new RestServicesClient(new RestBridgeProperties()), objectMapper);
     }
 
     @Test
@@ -74,6 +76,72 @@ class ObjectServiceTest {
         assertThrows(SessionNotFoundException.class, () -> {
             objectService.listFolderContentsById("invalid-session", "0b01234567890001");
         });
+    }
+
+    @Test
+    void listFolderContentsById_twoPages_returnsEntriesOfBoth() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(listPage(0, 100, true));
+            server.enqueue(listPage(100, 66, false));
+            server.start();
+            mockSession(server);
+
+            List<ObjectInfo> objects = objectService.listFolderContentsById("session-1", "0b04719980003df0");
+
+            assertEquals(166, objects.size());
+            assertEquals("dm_document", objects.get(165).getType());
+            assertEquals(String.format("09%014d", 165), objects.get(165).getObjectId());
+            RecordedRequest first = server.takeRequest();
+            assertEquals("/repositories/testrepo/folders/0b04719980003df0/objects",
+                    first.getRequestUrl().encodedPath());
+            assertNull(first.getRequestUrl().queryParameter("inline"));
+            assertEquals("2", server.takeRequest().getRequestUrl().queryParameter("page"));
+        }
+    }
+
+    @Test
+    void getCabinets_twoPages_returnsEntriesOfBoth() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(listPage(0, 2, true));
+            server.enqueue(listPage(2, 1, false));
+            server.start();
+            mockSession(server);
+
+            List<ObjectInfo> cabinets = objectService.getCabinets("session-1");
+
+            assertEquals(3, cabinets.size());
+            assertEquals("/repositories/testrepo/cabinets", server.takeRequest().getRequestUrl().encodedPath());
+            assertEquals(2, server.getRequestCount());
+        }
+    }
+
+    @Test
+    void getObject_forbiddenObjectOperation_throwsWithForbidden() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(jsonResponse("{\"operations\": [{\"id\": \"getObject\", \"response\": "
+                    + "{\"status\": 403, \"entity\": \"{}\"}}]}"));
+            server.start();
+            mockSession(server);
+
+            RestBridgeException ex = assertThrows(RestBridgeException.class, () ->
+                    objectService.getObject("session-1", "0901234567890001"));
+            assertEquals(HttpStatus.FORBIDDEN, ex.getStatus());
+            assertEquals("REST_ERROR", ex.getCode());
+        }
+    }
+
+    private static MockResponse listPage(int first, int count, boolean hasNext) {
+        StringBuilder entries = new StringBuilder();
+        for (int i = first; i < first + count; i++) {
+            if (i > first) {
+                entries.append(',');
+            }
+            String id = String.format("09%014d", i);
+            entries.append("{\"title\": \"doc").append(i).append("\", \"summary\": \"dm_document ").append(id)
+                    .append("\", \"id\": \"http://host/repositories/testrepo/objects/").append(id).append("\"}");
+        }
+        String links = hasNext ? ", \"links\": [{\"rel\": \"next\", \"href\": \"next-page\"}]" : "";
+        return jsonResponse("{\"entries\": [" + entries + "]" + links + "}");
     }
 
     @Test
