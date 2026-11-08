@@ -286,6 +286,133 @@ class ObjectServiceTest {
     }
 
     @Test
+    void createObject_inFolderPath_looksUpEachSegmentAndPostsToLastFolder() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(folderEntries("0c01234567890001"));
+            server.enqueue(folderEntries("0b01234567890002"));
+            enqueueCreated(server, "dm_document");
+            server.start();
+            mockSession(server);
+            mockTypeChain("dm_document", "dm_sysobject");
+
+            objectService.createObject("session-1", createRequest("dm_document", "/Temp/Reports"));
+
+            RecordedRequest cabinetLookup = server.takeRequest();
+            assertEquals("/repositories/testrepo/cabinets", cabinetLookup.getRequestUrl().encodedPath());
+            assertEquals("object_name='Temp'", cabinetLookup.getRequestUrl().queryParameter("filter"));
+            RecordedRequest folderLookup = server.takeRequest();
+            assertEquals("/repositories/testrepo/folders/0c01234567890001/folders",
+                    folderLookup.getRequestUrl().encodedPath());
+            assertEquals("object_name='Reports'", folderLookup.getRequestUrl().queryParameter("filter"));
+            RecordedRequest create = server.takeRequest();
+            assertEquals("POST", create.getMethod());
+            assertEquals("/repositories/testrepo/folders/0b01234567890002/documents", create.getPath());
+        }
+    }
+
+    @Test
+    void createObject_withFolderId_postsToFolderWithoutLookup() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            enqueueCreated(server, "dm_document");
+            server.start();
+            mockSession(server);
+            mockTypeChain("dm_document", "dm_sysobject");
+
+            objectService.createObject("session-1", createRequest("dm_document", "0b01234567890002"));
+
+            RecordedRequest create = server.takeRequest();
+            assertEquals("POST", create.getMethod());
+            assertEquals("/repositories/testrepo/folders/0b01234567890002/documents", create.getPath());
+        }
+    }
+
+    @Test
+    void createObject_pathSegmentNotFound_throwsObjectNotFoundAndSendsNoCreate() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(folderEntries("0c01234567890001"));
+            server.enqueue(jsonResponse("{}"));
+            server.start();
+            mockSession(server);
+            mockTypeChain("dm_document", "dm_sysobject");
+
+            assertThrows(ObjectNotFoundException.class, () -> objectService.createObject("session-1",
+                    createRequest("dm_document", "/Temp/no_such_folder")));
+            assertEquals(2, server.getRequestCount());
+        }
+    }
+
+    @Test
+    void createObject_pathSegmentWithQuote_sendsQuoteDoubled() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(jsonResponse("{}"));
+            server.start();
+            mockSession(server);
+            mockTypeChain("dm_document", "dm_sysobject");
+
+            assertThrows(ObjectNotFoundException.class, () -> objectService.createObject("session-1",
+                    createRequest("dm_document", "/O'Brien")));
+            assertEquals("object_name='O''Brien'",
+                    server.takeRequest().getRequestUrl().queryParameter("filter"));
+        }
+    }
+
+    @Test
+    void createObject_folderSubtype_postsToFolders() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            enqueueCreated(server, "dm_category");
+            server.start();
+            mockSession(server);
+            mockTypeChain("dm_category", "dm_folder");
+
+            objectService.createObject("session-1", createRequest("dm_category", "0b01234567890002"));
+
+            assertEquals("/repositories/testrepo/folders/0b01234567890002/folders",
+                    server.takeRequest().getPath());
+        }
+    }
+
+    @Test
+    void createObject_cabinet_postsToCabinets() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            enqueueCreated(server, "dm_cabinet");
+            server.start();
+            mockSession(server);
+
+            objectService.createObject("session-1", createRequest("dm_cabinet", null));
+
+            assertEquals("/repositories/testrepo/cabinets", server.takeRequest().getPath());
+        }
+    }
+
+    private void mockTypeChain(String... chain) {
+        for (int i = 0; i < chain.length; i++) {
+            String superType = i + 1 < chain.length ? chain[i + 1] : "";
+            when(typeService.getTypeInfo("session-1", chain[i])).thenReturn(TypeInfo.builder()
+                    .name(chain[i]).superType(superType).attributes(List.of()).build());
+        }
+    }
+
+    private static MockResponse folderEntries(String folderId) {
+        return jsonResponse("{\"entries\": [{\"id\": \"http://host/repositories/testrepo/objects/"
+                + folderId + "\"}]}");
+    }
+
+    private static void enqueueCreated(MockWebServer server, String type) {
+        server.enqueue(jsonResponse("{\"properties\": {\"r_object_id\": \"0901234567890003\", "
+                + "\"r_object_type\": \"" + type + "\"}}"));
+        server.enqueue(jsonResponse("{\"basic-permission\": \"Delete\"}"));
+    }
+
+    private static CreateObjectRequest createRequest(String type, String folderPath) {
+        return CreateObjectRequest.builder()
+                .sessionId("session-1")
+                .objectType(type)
+                .objectName("qca_doc")
+                .folderPath(folderPath)
+                .build();
+    }
+
+    @Test
     void deleteObject_invalidSession_throwsException() {
         when(sessionService.getSession("invalid-session"))
             .thenThrow(new SessionNotFoundException("invalid-session"));
