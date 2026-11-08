@@ -8,6 +8,9 @@ spring:
     name: rest-bridge
   main:
     banner-mode: off
+  jackson:
+    deserialization:
+      fail-on-null-for-primitives: false
 
 # REST Bridge configuration
 rest-bridge:
