@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.List;
@@ -115,9 +116,29 @@ class ObjectServiceTest {
             server.start();
             mockSession(server);
 
-            assertThrows(RestBridgeException.class, () ->
+            RestBridgeException ex = assertThrows(RestBridgeException.class, () ->
                     objectService.updateObject("session-1", "0901234567890001", updateRequest()));
+            assertEquals(HttpStatus.BAD_GATEWAY, ex.getStatus());
             assertEquals(1, server.getRequestCount());
+        }
+    }
+
+    @Test
+    void updateObject_writeOperationConflict_throwsWithUpstreamStatus() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(jsonResponse("{\"properties\": {\"r_object_type\": \"my_doc\"}}"));
+            server.enqueue(jsonResponse("{\"operations\": [{\"id\": \"updateObject\", \"response\": "
+                    + "{\"status\": 409, \"entity\": \"{}\"}}]}"));
+            server.start();
+            mockSession(server);
+            when(typeService.getTypeInfo("session-1", "my_doc")).thenReturn(TypeInfo.builder()
+                    .name("my_doc")
+                    .attributes(List.of())
+                    .build());
+
+            RestBridgeException ex = assertThrows(RestBridgeException.class, () ->
+                    objectService.updateObject("session-1", "0901234567890001", updateRequest()));
+            assertEquals(HttpStatus.CONFLICT, ex.getStatus());
         }
     }
 
