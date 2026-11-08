@@ -7,6 +7,7 @@ import com.spire.restbridge.exception.ObjectNotFoundException;
 import com.spire.restbridge.exception.RestBridgeException;
 import com.spire.restbridge.exception.SessionNotFoundException;
 import com.spire.restbridge.model.ObjectInfo;
+import com.spire.restbridge.model.SessionInfo;
 import com.spire.restbridge.model.TypeInfo;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
@@ -155,15 +156,102 @@ class ObjectServiceTest {
         }
     }
 
+    @Test
+    void getObject_twiceForSameTypeInOneSession_looksUpTypeOnce() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(getObjectBatch("my_doc"));
+            server.enqueue(getObjectBatch("my_doc"));
+            server.start();
+            mockSession(server);
+            when(typeService.getTypeInfo("session-1", "my_doc")).thenReturn(keywordsType(true));
+
+            objectService.getObject("session-1", "0901234567890001");
+            objectService.getObject("session-1", "0901234567890001");
+
+            verify(typeService, times(1)).getTypeInfo("session-1", "my_doc");
+        }
+    }
+
+    @Test
+    void updateObject_sameTypeInTwoSessions_usesEachSessionsOwnMetadata() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(jsonResponse("{\"properties\": {\"r_object_type\": \"my_doc\"}}"));
+            server.enqueue(updateBatch("my_doc"));
+            server.enqueue(jsonResponse("{\"properties\": {\"r_object_type\": \"my_doc\"}}"));
+            server.enqueue(updateBatch("my_doc"));
+            server.start();
+            mockSession(server, "session-1");
+            mockSession(server, "session-2");
+            when(typeService.getTypeInfo("session-1", "my_doc")).thenReturn(keywordsType(true));
+            when(typeService.getTypeInfo("session-2", "my_doc")).thenReturn(keywordsType(false));
+
+            objectService.updateObject("session-1", "0901234567890001", updateRequest());
+            objectService.updateObject("session-2", "0901234567890001", updateRequest());
+
+            server.takeRequest();
+            assertTrue(server.takeRequest().getBody().readUtf8().contains("\\\"keywords\\\":[\\\"alpha\\\"]"));
+            server.takeRequest();
+            assertTrue(server.takeRequest().getBody().readUtf8().contains("\\\"keywords\\\":\\\"alpha\\\""));
+            verify(typeService, times(1)).getTypeInfo("session-1", "my_doc");
+            verify(typeService, times(1)).getTypeInfo("session-2", "my_doc");
+        }
+    }
+
+    @Test
+    void updateObject_afterFailedTypeLookup_looksUpTypeAgainAndWrapsScalar() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(getObjectBatch("my_doc"));
+            server.enqueue(jsonResponse("{\"properties\": {\"r_object_type\": \"my_doc\"}}"));
+            server.enqueue(updateBatch("my_doc"));
+            server.start();
+            mockSession(server);
+            when(typeService.getTypeInfo("session-1", "my_doc"))
+                    .thenThrow(new RestBridgeException("REST_ERROR", "Failed to get type", HttpStatus.BAD_GATEWAY))
+                    .thenReturn(keywordsType(true));
+
+            objectService.getObject("session-1", "0901234567890001");
+            objectService.updateObject("session-1", "0901234567890001", updateRequest());
+
+            server.takeRequest();
+            server.takeRequest();
+            assertTrue(server.takeRequest().getBody().readUtf8().contains("\\\"keywords\\\":[\\\"alpha\\\"]"));
+        }
+    }
+
     private void mockSession(MockWebServer server) {
+        mockSession(server, "session-1");
+    }
+
+    private void mockSession(MockWebServer server, String sessionId) {
         RestSessionHolder session = new RestSessionHolder();
         session.setRepository("testrepo");
         session.setWebClient(WebClient.create(server.url("/").toString()));
-        when(sessionService.getSession("session-1")).thenReturn(session);
+        session.setSessionInfo(SessionInfo.builder().sessionId(sessionId).build());
+        when(sessionService.getSession(sessionId)).thenReturn(session);
     }
 
     private static MockResponse jsonResponse(String body) {
         return new MockResponse().setHeader("Content-Type", "application/json").setBody(body);
+    }
+
+    private static MockResponse getObjectBatch(String type) {
+        return jsonResponse("{\"operations\": [{\"id\": \"getObject\", \"response\": "
+                + "{\"status\": 200, \"entity\": \"{\\\"properties\\\": "
+                + "{\\\"r_object_id\\\": \\\"0901234567890001\\\", \\\"r_object_type\\\": \\\"" + type + "\\\"}}\"}}]}");
+    }
+
+    private static MockResponse updateBatch(String type) {
+        return jsonResponse("{\"operations\": [{\"id\": \"updateObject\", \"response\": "
+                + "{\"status\": 200, \"entity\": \"{\\\"properties\\\": "
+                + "{\\\"r_object_id\\\": \\\"0901234567890001\\\", \\\"r_object_type\\\": \\\"" + type + "\\\"}}\"}}]}");
+    }
+
+    private static TypeInfo keywordsType(boolean repeating) {
+        return TypeInfo.builder()
+                .name("my_doc")
+                .attributes(List.of(TypeInfo.AttributeInfo.builder()
+                        .name("keywords").dataType("STRING").repeating(repeating).build()))
+                .build();
     }
 
     private static UpdateObjectRequest updateRequest() {
