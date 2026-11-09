@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -43,6 +44,14 @@ class StatusControllerTest {
     void unknownPath_returns404() throws Exception {
         mockMvc.perform(get("/api/v1/nothing"))
                 .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void unknownPath_acceptXml_returns404Json() throws Exception {
+        mockMvc.perform(get("/api/v1/nothing").accept(MediaType.APPLICATION_XML))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 }
