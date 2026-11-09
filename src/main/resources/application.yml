@@ -11,6 +11,9 @@ spring:
   jackson:
     deserialization:
       fail-on-null-for-primitives: false
+  web:
+    resources:
+      add-mappings: false
 
 # REST Bridge configuration
 rest-bridge:
