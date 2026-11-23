@@ -59,7 +59,7 @@ cd rest-bridge
 # Build with Maven
 mvn clean package
 
-# The JAR will be in target/rest-bridge-1.4.0.jar
+# The JAR will be in target/rest-bridge-2.0.0.jar
 ```
 
 ## Running
@@ -73,19 +73,19 @@ mvn spring-boot:run
 ### Using the JAR
 
 ```bash
-java -jar target/rest-bridge-1.4.0.jar
+java -jar target/rest-bridge-2.0.0.jar
 ```
 
 ### Specifying a custom port
 
 ```bash
-java -jar target/rest-bridge-1.4.0.jar --server.port=8080
+java -jar target/rest-bridge-2.0.0.jar --server.port=8080
 ```
 
 Or via environment variable:
 ```bash
 export SERVER_PORT=8080
-java -jar target/rest-bridge-1.4.0.jar
+java -jar target/rest-bridge-2.0.0.jar
 ```
 
 ### Listening Address
@@ -95,13 +95,13 @@ The bridge listens on **127.0.0.1** only, so only the local machine can reach it
 To accept connections from other hosts, set the address to `0.0.0.0`:
 
 ```bash
-java -jar target/rest-bridge-1.4.0.jar --server.address=0.0.0.0
+java -jar target/rest-bridge-2.0.0.jar --server.address=0.0.0.0
 ```
 
 Or via environment variable:
 ```bash
 export SERVER_ADDRESS=0.0.0.0
-java -jar target/rest-bridge-1.4.0.jar
+java -jar target/rest-bridge-2.0.0.jar
 ```
 
 ## Configuration
@@ -289,7 +289,7 @@ Response:
 ```json
 {
   "service": "rest-bridge",
-  "version": "1.4.0",
+  "version": "2.0.0",
   "backend": "REST",
   "description": "Documentum REST Services bridge - uses native REST API endpoints"
 }
@@ -304,6 +304,8 @@ rest-bridge/
 ├── src/main/java/com/spire/restbridge/
 │   ├── RestBridgeApplication.java      # Main application
 │   ├── config/                         # Configuration classes
+│   │   ├── ErrorResponses.java
+│   │   ├── ErrorResponsesCustomizer.java
 │   │   └── RestBridgeProperties.java
 │   ├── controller/                     # REST controllers
 │   │   ├── SessionController.java
@@ -317,12 +319,19 @@ rest-bridge/
 │   │   ├── DqlNotAvailableException.java
 │   │   └── ...
 │   ├── model/                          # Domain models
-│   └── service/                        # Business logic
-│       ├── SessionService.java
-│       ├── DqlService.java
-│       ├── ObjectService.java
-│       ├── TypeService.java
-│       └── UserGroupService.java
+│   ├── service/                        # Business logic
+│   │   ├── SessionService.java
+│   │   ├── DqlService.java
+│   │   ├── ObjectService.java
+│   │   ├── TypeService.java
+│   │   ├── UserGroupService.java
+│   │   ├── RestServicesClient.java
+│   │   ├── RestSessionHolder.java
+│   │   └── AttrMeta.java
+│   └── util/                           # Shared helpers
+│       ├── NamePatternUtils.java
+│       ├── PermissionUtils.java
+│       └── PropertyUtils.java
 ├── src/main/resources/
 │   └── application.yml                 # Configuration
 ├── src/test/                           # Unit tests
