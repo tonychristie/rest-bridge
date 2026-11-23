@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.stream.Collectors;
 
@@ -96,6 +97,11 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleNoHandlerFound(NoHandlerFoundException e) {
         return requestError(HttpStatus.NOT_FOUND, "NOT_FOUND",
                 "No endpoint " + e.getHttpMethod() + " " + e.getRequestURL());
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResourceFound(NoResourceFoundException e) {
+        return requestError(HttpStatus.NOT_FOUND, "NOT_FOUND", "No resource " + e.getResourcePath());
     }
 
     @ExceptionHandler(Exception.class)

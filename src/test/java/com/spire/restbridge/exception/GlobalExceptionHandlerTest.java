@@ -2,8 +2,10 @@ package com.spire.restbridge.exception;
 
 import com.spire.restbridge.dto.ErrorResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -39,5 +41,15 @@ class GlobalExceptionHandlerTest {
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         assertEquals("AGGREGATE_QUERY_NOT_SUPPORTED", response.getBody().getCode());
+    }
+
+    @Test
+    void handleNoResourceFound_returnsNotFoundWithResourcePath() {
+        ResponseEntity<ErrorResponse> response = handler.handleNoResourceFound(
+                new NoResourceFoundException(HttpMethod.GET, "/swagger-ui/missing.css", "missing.css"));
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+        assertEquals("NOT_FOUND", response.getBody().getCode());
+        assertEquals("No resource missing.css", response.getBody().getMessage());
     }
 }
