@@ -18,7 +18,7 @@ Client Application (e.g., VS Code Extension)
     │ (Spring Boot)│
     └──────────────┘
            │
-           │ HTTP/REST (WebClient)
+           │ HTTP/REST (RestTemplate)
            ▼
     ┌──────────────────────┐
     │ Documentum REST      │
@@ -59,7 +59,7 @@ cd rest-bridge
 # Build with Maven
 mvn clean package
 
-# The JAR will be in target/rest-bridge-1.4.0.jar
+# The JAR will be in target/rest-bridge-2.0.0.jar
 ```
 
 ## Running
@@ -73,19 +73,35 @@ mvn spring-boot:run
 ### Using the JAR
 
 ```bash
-java -jar target/rest-bridge-1.4.0.jar
+java -jar target/rest-bridge-2.0.0.jar
 ```
 
 ### Specifying a custom port
 
 ```bash
-java -jar target/rest-bridge-1.4.0.jar --server.port=8080
+java -jar target/rest-bridge-2.0.0.jar --server.port=8080
 ```
 
 Or via environment variable:
 ```bash
 export SERVER_PORT=8080
-java -jar target/rest-bridge-1.4.0.jar
+java -jar target/rest-bridge-2.0.0.jar
+```
+
+### Listening Address
+
+The bridge listens on **127.0.0.1** only, so only the local machine can reach it. The bridge has no authentication: any client that can reach it can open a session and make the bridge send requests to any URL.
+
+To accept connections from other hosts, set the address to `0.0.0.0`:
+
+```bash
+java -jar target/rest-bridge-2.0.0.jar --server.address=0.0.0.0
+```
+
+Or via environment variable:
+```bash
+export SERVER_ADDRESS=0.0.0.0
+java -jar target/rest-bridge-2.0.0.jar
 ```
 
 ## Configuration
@@ -94,6 +110,7 @@ Application configuration is in `src/main/resources/application.yml`:
 
 ```yaml
 server:
+  address: 127.0.0.1
   port: 9877
 
 rest-bridge:
@@ -107,6 +124,7 @@ rest-bridge:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SERVER_PORT` | HTTP port | 9877 |
+| `SERVER_ADDRESS` | Address the server listens on | 127.0.0.1 |
 | `REST_BRIDGE_TIMEOUT_SECONDS` | Request timeout | 30 |
 | `REST_BRIDGE_SESSION_TIMEOUT_MINUTES` | Session timeout | 30 |
 
@@ -141,9 +159,19 @@ Once running, access the Swagger UI at:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/v1/objects/{id}` | Get object by r_object_id |
-| PUT | `/api/v1/objects/{id}` | Update object attributes |
+| POST | `/api/v1/objects/{id}` | Update object attributes |
+| POST | `/api/v1/objects` | Create object |
+| DELETE | `/api/v1/objects/{id}` | Delete object (`allVersions=true` deletes all versions) |
 | GET | `/api/v1/cabinets` | List cabinets |
-| GET | `/api/v1/folders/{id}/objects` | List folder contents |
+| GET | `/api/v1/objects/{id}/contents` | List folder contents |
+
+### Version Control Operations
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| PUT | `/api/v1/objects/{id}/lock` | Check out object |
+| DELETE | `/api/v1/objects/{id}/lock` | Cancel checkout |
+| POST | `/api/v1/objects/{id}/versions` | Check in object (optional `versionLabel`, default `CURRENT`) |
 
 ### Type Operations
 
@@ -158,8 +186,10 @@ Once running, access the Swagger UI at:
 |--------|----------|-------------|
 | GET | `/api/v1/users` | List users |
 | GET | `/api/v1/users/{userName}` | Get user info |
+| GET | `/api/v1/users/{userName}/groups` | List groups that contain the user |
 | GET | `/api/v1/groups` | List groups |
 | GET | `/api/v1/groups/{groupName}` | Get group info |
+| GET | `/api/v1/groups/{groupName}/parents` | List groups that contain the group |
 
 > **Note:** User and group operations use native REST endpoints (`/users`, `/groups`) instead of DQL, making them available even when DQL is disabled.
 
@@ -245,7 +275,7 @@ curl http://localhost:9877/health
 Response:
 ```json
 {
-  "status": "UP"
+  "status": "ok"
 }
 ```
 
@@ -259,7 +289,7 @@ Response:
 ```json
 {
   "service": "rest-bridge",
-  "version": "1.4.0",
+  "version": "2.0.0",
   "backend": "REST",
   "description": "Documentum REST Services bridge - uses native REST API endpoints"
 }
@@ -274,6 +304,8 @@ rest-bridge/
 ├── src/main/java/com/spire/restbridge/
 │   ├── RestBridgeApplication.java      # Main application
 │   ├── config/                         # Configuration classes
+│   │   ├── ErrorResponses.java
+│   │   ├── ErrorResponsesCustomizer.java
 │   │   └── RestBridgeProperties.java
 │   ├── controller/                     # REST controllers
 │   │   ├── SessionController.java
@@ -287,12 +319,19 @@ rest-bridge/
 │   │   ├── DqlNotAvailableException.java
 │   │   └── ...
 │   ├── model/                          # Domain models
-│   └── service/                        # Business logic
-│       ├── SessionService.java
-│       ├── DqlService.java
-│       ├── ObjectService.java
-│       ├── TypeService.java
-│       └── UserGroupService.java
+│   ├── service/                        # Business logic
+│   │   ├── SessionService.java
+│   │   ├── DqlService.java
+│   │   ├── ObjectService.java
+│   │   ├── TypeService.java
+│   │   ├── UserGroupService.java
+│   │   ├── RestServicesClient.java
+│   │   ├── RestSessionHolder.java
+│   │   └── AttrMeta.java
+│   └── util/                           # Shared helpers
+│       ├── NamePatternUtils.java
+│       ├── PermissionUtils.java
+│       └── PropertyUtils.java
 ├── src/main/resources/
 │   └── application.yml                 # Configuration
 ├── src/test/                           # Unit tests
@@ -304,6 +343,14 @@ rest-bridge/
 ```bash
 mvn test
 ```
+
+To run the tests, SpotBugs and the coverage report together:
+
+```bash
+mvn verify
+```
+
+`mvn verify` fails the build on any SpotBugs item that `spotbugs-exclude.xml` does not cover, and writes the coverage report to `target/site/jacoco/index.html`.
 
 ### DQL Graceful Degradation
 

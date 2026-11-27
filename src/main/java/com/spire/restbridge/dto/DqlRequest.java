@@ -1,6 +1,9 @@
 package com.spire.restbridge.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
+import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -12,7 +15,7 @@ import lombok.NoArgsConstructor;
 @Data
 @Builder
 @NoArgsConstructor
-@AllArgsConstructor
+@AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class DqlRequest {
 
     @NotBlank(message = "Session ID is required")
@@ -22,12 +25,16 @@ public class DqlRequest {
     private String query;
 
     /**
-     * Maximum number of rows to return (0 = all).
+     * Maximum number of rows to return.
      */
-    private int maxRows;
+    @Positive(message = "Max rows must be positive")
+    @Builder.Default
+    private int maxRows = 100;
 
     /**
-     * Starting row for pagination.
+     * Index of the first row to return (0-based).
      */
-    private int startRow;
+    @PositiveOrZero(message = "Start row must not be negative")
+    @Builder.Default
+    private int startRow = 0;
 }
